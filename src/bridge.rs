@@ -265,3 +265,15 @@ fn to_tool_info(tool: Tool) -> ToolInfo {
         open_world: annotations.open_world_hint.unwrap_or(false),
     }
 }
+
+impl crate::sandbox::ToolCaller for UpstreamManager {
+    fn call_tool(
+        &self,
+        server: &str,
+        tool: &str,
+        arguments: Value,
+        timeout: Duration,
+    ) -> Result<Value> {
+        self.call(server, tool, arguments, timeout)
+    }
+}

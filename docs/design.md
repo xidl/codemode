@@ -221,7 +221,7 @@ catalog -> agents.md + namespace IDL + bundle IDL
 沙箱内直接调用：
 
 ```js
-const issue = mcp.github.get_issue({ owner: "xidl", repo: "xidl", issue_number: 361 });
+const issue = mcp.github.get_issue("xidl", "xidl", 361);
 return unwrap(issue);
 ```
 
@@ -503,10 +503,11 @@ codemode MCP server 只注册一个工具：
 
 **决策**
 
-第一版先逐 tool 生成完整 input struct，保证正确性；第二版再做公共字段识别：
+第一版先按 schema property 顺序生成位置参数；嵌套 object 仍生成命名
+struct。第二版再对**嵌套 struct** 做公共字段识别：
 
-- 相同 schema 的字段集合出现超过阈值 -> 生成 `<Server>CommonInput`。
-- tool input 用 struct 继承复用。
+- 相同 schema 的字段集合出现超过阈值 -> 生成公共 nested struct。
+- 嵌套字段用 struct 继承复用；顶层参数不做对象包装。
 
 **备选**
 
@@ -668,7 +669,7 @@ codemode 的 `instructions` 注入：
 **决策**
 
 ```json
-{ "code": "return mcp.github.get_issue({ ... });", "timeout_ms": 10000 }
+{ "code": "return mcp.github.get_issue('xidl', 'xidl', 361);", "timeout_ms": 10000 }
 ```
 
 - `code` 必填；不提供 `path` 参数。
@@ -755,16 +756,12 @@ interface GithubIssuesApi {
     /// Get a single issue by owner/repo/number.
     ///
     /// Returns the issue body, labels, and state.
-    GithubIssueResult get_issue(in GetIssueInput input);
-};
-
-struct GetIssueInput {
     /// Repository owner.
-    string owner;
+    string owner,
     /// Repository name.
-    string repo;
+    string repo,
     /// Issue number.
-    int64 issue_number;
+    int64 issue_number
 };
 ```
 
@@ -772,7 +769,7 @@ struct GetIssueInput {
 
 ```md
 ## /github/issues.idl
-- `mcp.github.get_issue({ owner: string, repo: string, issue_number: number })`
+- `mcp.github.get_issue(owner: string, repo: string, issue_number: number)`
   Get a single issue by owner/repo/number.
 ```
 
@@ -881,8 +878,12 @@ xidlc gen --out-dir .codemode/.internal codemode-manifest \
         {
           "js": "get_issue",
           "mcp": "get_issue",
-          "input": "GithubIssueInput",
           "output": "GithubIssueResult",
+          "params": [
+            { "name": "owner", "wire": "owner", "required": true },
+            { "name": "repo", "wire": "repo", "required": true },
+            { "name": "issue_number", "wire": "issue_number", "required": true }
+          ],
           "readOnly": true,
           "destructive": false
         }

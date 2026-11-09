@@ -10,11 +10,10 @@ use rmcp::{ErrorData as McpError, RoleServer, ServerHandler};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::bridge::UpstreamManager;
-use crate::sandbox::{self, RuntimeServer};
+use crate::sandbox::{self, RuntimeServer, ToolCaller};
 
 pub struct AppState {
-    pub bridge: Arc<UpstreamManager>,
+    pub bridge: Arc<dyn ToolCaller>,
     pub servers: Vec<RuntimeServer>,
     pub instructions: String,
     pub errors: Vec<String>,

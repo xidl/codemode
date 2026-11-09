@@ -125,23 +125,24 @@ pub fn ensure_plugin_on_path() {
         "xidl-codemode-manifest{}",
         std::env::consts::EXE_SUFFIX
     ));
-    if !plugin.exists() && cfg!(debug_assertions) {
-        // In `cargo run` the manifest plugin is built into the same target dir.
-        let fallback = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("target")
-            .join("debug")
-            .join(format!(
-                "xidl-codemode-manifest{}",
-                std::env::consts::EXE_SUFFIX
-            ));
-        if fallback.exists() {
-            prepend_path(fallback.parent().unwrap_or(dir));
-            return;
-        }
-    }
     if plugin.exists() {
         prepend_path(dir);
+        return;
     }
+    #[cfg(debug_assertions)]
+    if let Some(debug_dir) = debug_plugin_dir() {
+        prepend_path(&debug_dir);
+    }
+}
+
+#[cfg(debug_assertions)]
+fn debug_plugin_dir() -> Option<PathBuf> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/debug");
+    let plugin = dir.join(format!(
+        "xidl-codemode-manifest{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    plugin.exists().then_some(dir)
 }
 
 fn prepend_path(dir: &Path) {

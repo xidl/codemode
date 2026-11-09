@@ -6,8 +6,17 @@ use rquickjs::{Context, Function, Runtime};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::bridge::UpstreamManager;
 use crate::manifest_types::Manifest;
+
+pub trait ToolCaller: Send + Sync {
+    fn call_tool(
+        &self,
+        server: &str,
+        tool: &str,
+        arguments: Value,
+        timeout: Duration,
+    ) -> crate::error::Result<Value>;
+}
 
 #[derive(Debug, Clone)]
 pub struct RuntimeServer {
@@ -65,6 +74,14 @@ struct JsServer {
 struct JsTool {
     js: String,
     mcp: String,
+    params: Vec<JsParam>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct JsParam {
+    name: String,
+    wire: String,
+    required: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -83,7 +100,7 @@ const MAX_LOGS: usize = 100;
 const MAX_LOG_BYTES: usize = 64 * 1024;
 
 pub fn execute(
-    bridge: &Arc<UpstreamManager>,
+    bridge: &Arc<dyn ToolCaller>,
     servers: &[RuntimeServer],
     code: &str,
     timeout: Duration,
@@ -168,7 +185,7 @@ pub fn execute(
 }
 
 struct RunContext {
-    bridge: Arc<UpstreamManager>,
+    bridge: Arc<dyn ToolCaller>,
     code: String,
     manifest_json: String,
     deadline: Instant,
@@ -235,7 +252,7 @@ fn run_js(context: RunContext) -> std::result::Result<JsOutcome, (String, Option
                     )?;
                 let remaining = deadline.saturating_duration_since(now);
                 let call_started = Instant::now();
-                let result = call_bridge.call(&server, &tool, arguments, remaining);
+                let result = call_bridge.call_tool(&server, &tool, arguments, remaining);
                 let duration_ms = call_started.elapsed().as_millis() as u64;
                 traces
                     .lock()
@@ -323,6 +340,15 @@ fn js_manifest(servers: &[RuntimeServer]) -> JsManifest {
                 .map(|tool| JsTool {
                     js: tool.js.clone(),
                     mcp: tool.mcp.clone(),
+                    params: tool
+                        .params
+                        .iter()
+                        .map(|param| JsParam {
+                            name: param.name.clone(),
+                            wire: param.wire.clone(),
+                            required: param.required,
+                        })
+                        .collect(),
                 })
                 .collect(),
         })
@@ -380,9 +406,20 @@ const __mcp = Object.create(null);
 for (const __server of __M.servers) {
   const __ns = Object.create(null);
   for (const __tool of __server.tools) {
-    const __fn = function(args) {
-      const __args = args === undefined ? "{}" : JSON.stringify(args);
-      return JSON.parse(__xidl_call(__server.name, __tool.mcp, __args));
+    const __fn = function(...args) {
+      if (args.length > __tool.params.length) {
+        throw new Error("too many arguments for " + __server.name + "." + __tool.js + " (expected " + __tool.params.length + ")");
+      }
+      const __payload = {};
+      for (let __i = 0; __i < __tool.params.length; __i++) {
+        const __param = __tool.params[__i];
+        if (__i < args.length && args[__i] !== undefined) {
+          __payload[__param.wire] = args[__i];
+        } else if (__param.required) {
+          throw new Error("missing required argument " + __param.name + " for " + __server.name + "." + __tool.js);
+        }
+      }
+      return JSON.parse(__xidl_call(__server.name, __tool.mcp, JSON.stringify(__payload)));
     };
     __ns[__tool.js] = __fn;
     if (__tool.mcp !== __tool.js) __ns[__tool.mcp] = __fn;

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use xidl_codemode::manifest_types::{Manifest, ManifestNamespace, ManifestTool};
+use xidl_codemode::manifest_types::{Manifest, ManifestNamespace, ManifestParam, ManifestTool};
 use xidl_parser::hir::{
     Annotation, AnnotationParams, ConstExpr, Definition, Export, InterfaceDclInner, Literal, OpDcl,
     OpTypeSpec, ParserProperties, Specification, TypeSpec,
@@ -121,12 +121,26 @@ fn walk_definitions(definitions: &[Definition], out: &mut Vec<Interface>) {
 fn manifest_tool(op: OpDcl) -> Result<ManifestTool, String> {
     let js = op.ident.clone();
     let mcp = annotation_string(&op.annotations, "mcp_tool").unwrap_or_else(|| js.clone());
-    let input = op
+    let params = op
         .parameter
         .as_ref()
-        .and_then(|params| params.0.first())
-        .map(|param| type_name(&param.ty))
-        .unwrap_or_else(|| "Any".to_string());
+        .map(|parameters| {
+            parameters
+                .0
+                .iter()
+                .map(|param| {
+                    let name = param.declarator.0.clone();
+                    let wire =
+                        annotation_rename(&param.annotations).unwrap_or_else(|| name.clone());
+                    ManifestParam {
+                        name,
+                        wire,
+                        required: !has_optional(&param.annotations),
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     let output = match &op.ty {
         OpTypeSpec::Void => "Void".to_string(),
         OpTypeSpec::TypeSpec(ty) => type_name(ty),
@@ -134,8 +148,8 @@ fn manifest_tool(op: OpDcl) -> Result<ManifestTool, String> {
     Ok(ManifestTool {
         js,
         mcp,
-        input,
         output,
+        params,
         read_only: has_annotation(&op.annotations, "mcp_read_only"),
         destructive: has_annotation(&op.annotations, "mcp_destructive"),
         idempotent: has_annotation(&op.annotations, "mcp_idempotent"),
@@ -165,6 +179,19 @@ fn has_annotation(annotations: &[Annotation], name: &str) -> bool {
     annotations
         .iter()
         .any(|annotation| annotation_name(annotation) == Some(name))
+}
+
+fn has_optional(annotations: &[Annotation]) -> bool {
+    annotations
+        .iter()
+        .any(|annotation| matches!(annotation, Annotation::Optional { .. }))
+}
+
+fn annotation_rename(annotations: &[Annotation]) -> Option<String> {
+    annotations.iter().find_map(|annotation| match annotation {
+        Annotation::Rename { name } => Some(name.clone()),
+        _ => None,
+    })
 }
 
 fn annotation_string(annotations: &[Annotation], name: &str) -> Option<String> {

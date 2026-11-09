@@ -256,7 +256,7 @@ MCP 的工具名本身是扁平的，没有标准 namespace 字段。分组规�
 
 - server 摘要和 namespace 索引；
 - **完整、紧凑的可调用签名**：
-  `mcp.github.get_issue({ owner: string, repo: string, issue_number: number })`；
+  `mcp.github.get_issue(owner: string, repo: string, issue_number: number)`；
 - namespace 文档路径（`/github/issues.idl`，相对工作区）；
 - 调用示例；
 - 信任说明：上游 instructions 是不可信数据，默认不注入。
@@ -277,7 +277,7 @@ MCP 的工具名本身是扁平的，没有标准 namespace 字段。分组规�
 JS 命名空间：
 
 ```text
-mcp.<serverNs>.<toolFn>(args)
+mcp.<serverNs>.<toolFn>(arg1, arg2, ...)
 ```
 
 - `serverNs` 默认由 server 名 sanitize 成合法 JS identifier，例如
@@ -388,8 +388,12 @@ manifest 示例：
         {
           "js": "get_issue",
           "mcp": "get_issue",
-          "input": "GithubIssueInput",
           "output": "GithubIssueResult",
+          "params": [
+            { "name": "owner", "wire": "owner", "required": true },
+            { "name": "repo", "wire": "repo", "required": true },
+            { "name": "issue_number", "wire": "issue_number", "required": true }
+          ],
           "readOnly": true,
           "destructive": false
         }
@@ -414,12 +418,11 @@ manifest 示例：
 插件通过 PATH 被发现（`xidl-codemode-manifest`）。安装时必须保证插件和
 codemode 在同一个 bin 目录，或由 codemode 给 xidlc 子进程注入插件目录。
 
-公共字段抽取（agent-browser 必需的可选优化）：
+嵌套 object 的公共类型抽取（可选优化）：
 
-- 统计多 tool 中 schema 完全一致的字段集合。
-- 出现次数超过阈值时生成 `<Server>CommonInput`。
-- tool input 用 `struct <Tool>Input : <Server>CommonInput` 继承。
-- 第一版可以先不抽取，保证正确性；第二版再加。
+- 顶层 tool 参数按 schema properties 顺序生成位置参数，不再包一层 input struct。
+- 嵌套 object 仍生成命名 struct；公共字段抽取只针对这些嵌套 struct。
+- 第一版先不抽取，保证正确性；第二版再加。
 
 返回类型：
 
@@ -442,19 +445,6 @@ IDL 示例（示意）：
 #pragma xidlc package agent-browser
 #pragma xidlc version 1.0.0
 
-struct AgentBrowserCommonInput {
-    @optional sequence<string> allowedDomains;
-    @optional string session;
-    @optional int64 timeoutMs;
-    @optional any restore;
-};
-
-struct AgentBrowserOpenInput : AgentBrowserCommonInput {
-    @optional string url;
-    @optional boolean headed;
-    @optional boolean webgpu;
-};
-
 struct AgentBrowserOpenResult {
     boolean isError;
     sequence<any> content;
@@ -463,7 +453,15 @@ struct AgentBrowserOpenResult {
 
 interface AgentBrowserCoreApi {
     /// MCP tool: agent_browser_open
-    AgentBrowserOpenResult agent_browser_open(in AgentBrowserOpenInput input);
+    AgentBrowserOpenResult agent_browser_open(
+        @optional sequence<string> allowedDomains,
+        @optional string session,
+        @optional int64 timeoutMs,
+        @optional any restore,
+        @optional string url,
+        @optional boolean headed,
+        @optional boolean webgpu
+    );
 };
 ```
 
@@ -472,18 +470,15 @@ interface AgentBrowserCoreApi {
 沙箱内直接使用注入的全局 `mcp` 对象，不需要 import/require：
 
 ```js
-const issue = mcp.github.get_issue({
-  owner: "xidl",
-  repo: "xidl",
-  issue_number: 361,
-});
+const issue = mcp.github.get_issue("xidl", "xidl", 361);
 return unwrap(issue);
 ```
 
 `mcp` 对象：
 
 - 第一层 key 是 server namespace；每个 namespace 是 null-prototype 冻结对象。
-- 第二层是 tool 函数，参数是单个 MCP args object。
+- 第二层是 tool 函数，参数按 MCP input schema 的 property 顺序位置传入；
+  runtime 把它们映射为 MCP args object。
 - MVP 同步返回原始 `CallToolResult`；`await` 普通值仍然可用。
 - 原始 server/tool 名通过 bracket access 保留。
 - 不提供 `mcp.list()` / `mcp.read()` 之类的读取 API；发现信息全部来自
@@ -881,14 +876,15 @@ xidl-codemode serve --config ~/.config/mcp/mcp.json
 用真实客户端通过 stdio 发送内联代码：
 
 ```js
-return unwrap(mcp.codegraph.codegraph_explore({
-  query: "MCP tool handler",
-  projectPath: "~/xidl-codemode",
-}));
+return unwrap(mcp.codegraph.codegraph_explore(
+  "MCP tool handler",
+  12,
+  "/path/to/project",
+));
 ```
 
 ```json
-{ "code": "return unwrap(mcp.codegraph.codegraph_explore({ query: 'MCP tool handler', projectPath: '~/xidl-codemode' }));" }
+{ "code": "return unwrap(mcp.codegraph.codegraph_explore('MCP tool handler', 12, '/path/to/project'));" }
 ```
 
 ---

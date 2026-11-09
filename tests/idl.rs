@@ -51,13 +51,15 @@ fn generates_namespace_idl_and_agents_md() {
     assert!(idl.contains("@mcp_server(\"demo\")"));
     assert!(idl.contains("@mcp_namespace(\"issues\")"));
     assert!(idl.contains("@mcp_tool(\"issues.get\")"));
-    assert!(idl.contains("struct DemoIssuesIssuesGetInput"));
-    assert!(idl.contains("int64 id;"));
-    assert!(!idl.contains("@optional int64 id;"));
-    assert!(idl.contains("@optional string title;"));
-    assert!(idl.contains("@optional sequence<string> labels;"));
+    assert!(idl.contains("McpToolResult issues_get("));
+    assert!(idl.contains("int64 id,"));
+    assert!(idl.contains("@optional\n        string title\n"));
+    assert!(idl.contains("@optional\n        sequence<string> labels\n"));
+    assert!(!idl.contains("in DemoIssuesIssuesGetInput input"));
     assert!(idl.contains("@mcp_read_only"));
     assert!(idl.contains("@mcp_idempotent"));
-    assert!(generated.agents_md.contains("mcp.demo.issues_get"));
+    assert!(generated
+        .agents_md
+        .contains("mcp.demo.issues_get(id: number"));
     assert!(generated.bundle.contains("interface DemoIssuesApi"));
 }

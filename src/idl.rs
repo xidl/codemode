@@ -127,13 +127,57 @@ impl IdlBuilder {
 
     fn add_tool(&mut self, tool: &ToolInfo) {
         let tool_pascal = pascal_case(&method_name(&tool.name));
-        let input_name = self.unique_name(&format!(
-            "{}{}{}Input",
-            self.server_pascal, self.namespace_pascal, tool_pascal
-        ));
-        self.emit_struct(&input_name, &tool.input_schema);
         self.result_struct = true;
         let method = method_name(&tool.name);
+        let required: HashSet<&str> = tool
+            .input_schema
+            .get("required")
+            .and_then(Value::as_array)
+            .map(|values| values.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default();
+        let mut params = Vec::new();
+        if let Some(properties) = tool
+            .input_schema
+            .get("properties")
+            .and_then(Value::as_object)
+        {
+            for (key, value) in properties {
+                let param_name = if is_valid_ident(key) {
+                    key.clone()
+                } else {
+                    sanitize_ident(key)
+                };
+                let nested_name = format!(
+                    "{}{}{}{}",
+                    self.server_pascal,
+                    self.namespace_pascal,
+                    tool_pascal,
+                    pascal_case(key)
+                );
+                let ty = self.type_for(value, &nested_name);
+                let mut param = String::new();
+                if let Some(desc) = value.get("description").and_then(Value::as_str) {
+                    param.push_str(&doc_comment_indented(desc, 8));
+                }
+                let mut annotations = Vec::new();
+                if !required.contains(key.as_str()) {
+                    annotations.push("@optional".to_string());
+                }
+                if param_name != *key {
+                    annotations.push(format!("@rename(\"{}\")", escape(key)));
+                }
+                if !annotations.is_empty() {
+                    param.push_str(&format!("        {}\n", annotations.join(" ")));
+                }
+                param.push_str(&format!("        {ty} {param_name}"));
+                params.push(param);
+            }
+        }
+        let param_block = if params.is_empty() {
+            String::new()
+        } else {
+            format!("\n{}\n    ", params.join(",\n"))
+        };
         let mut annotations = String::new();
         annotations.push_str(&format!("    @mcp_tool(\"{}\")\n", escape(&tool.name)));
         if tool.read_only {
@@ -150,7 +194,7 @@ impl IdlBuilder {
         }
         let docs = doc_comment(&tool.description);
         self.methods.push(format!(
-            "{docs}{annotations}    McpToolResult {method}(in {input_name} input);"
+            "{docs}{annotations}    McpToolResult {method}({param_block});"
         ));
     }
 
@@ -307,16 +351,24 @@ fn method_name(tool: &str) -> String {
 }
 
 fn doc_comment(text: &str) -> String {
+    doc_comment_indented(text, 4)
+}
+
+fn doc_comment_indented(text: &str, indent: usize) -> String {
     if text.trim().is_empty() {
         return String::new();
     }
+    let padding = " ".repeat(indent);
     let mut out = String::new();
     for line in text.lines().take(12) {
         let line = line.trim();
         if line.is_empty() {
-            out.push_str("    ///\n");
+            out.push_str(&format!("{padding}///\n"));
         } else {
-            out.push_str(&format!("    /// {}\n", line.replace(['\r', '\u{0}'], "")));
+            out.push_str(&format!(
+                "{padding}/// {}\n",
+                line.replace(['\r', '\u{0}'], "")
+            ));
         }
     }
     out

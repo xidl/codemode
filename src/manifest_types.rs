@@ -20,8 +20,8 @@ pub struct ManifestNamespace {
 pub struct ManifestTool {
     pub js: String,
     pub mcp: String,
-    pub input: String,
     pub output: String,
+    pub params: Vec<ManifestParam>,
     #[serde(rename = "readOnly", default)]
     pub read_only: bool,
     #[serde(default)]
@@ -30,4 +30,12 @@ pub struct ManifestTool {
     pub idempotent: bool,
     #[serde(rename = "openWorld", default)]
     pub open_world: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManifestParam {
+    pub name: String,
+    pub wire: String,
+    #[serde(default)]
+    pub required: bool,
 }

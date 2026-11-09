@@ -5,7 +5,7 @@ gateway**. It exposes exactly one MCP tool, `execute`, and injects the upstream
 tools into a QuickJS sandbox as:
 
 ```js
-mcp.github.get_issue({ owner: "xidl", repo: "xidl", issue_number: 361 })
+mcp.github.get_issue("xidl", "xidl", 361)
 ```
 
 The generated xidl contracts are written to a workspace on disk so that coding
@@ -85,7 +85,7 @@ Add the gateway to your MCP client:
     "xidl-codemode": {
       "type": "stdio",
       "command": "xidl-codemode",
-      "args": ["serve", "--config", "/home/me/.config/mcp/mcp.json"]
+      "args": ["serve", "--config", "/path/to/mcp.json"]
     }
   }
 }
@@ -99,15 +99,17 @@ does not recurse.
 The agent calls `execute` with JavaScript:
 
 ```js
-const result = mcp.codegraph.codegraph_explore({
-  query: "xidl generator",
-  projectPath: "/home/me/xidl",
-});
+const result = mcp.codegraph.codegraph_explore(
+  "xidl generator",
+  12,
+  "/path/to/xidl",
+);
 return unwrap(result);
 ```
 
 `unwrap` throws on `isError`, returns `structuredContent` when present, and
-otherwise returns the content blocks.
+otherwise returns the content blocks. Tool arguments are positional and follow
+the upstream MCP input-schema property order.
 
 ## CLI
 

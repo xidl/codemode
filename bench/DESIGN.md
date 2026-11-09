@@ -20,7 +20,8 @@ model is configurable; the default is WorkBuddy DeepSeek
 ## Tasks
 
 `bench/tasks.json` contains code-navigation tasks against an indexed checkout
-of `~/xidl`. Each task has `must_contain` (case-insensitive) and
+of the checkout in `$BENCH_REPO` (default `$PWD/../xidl`). Each task has
+`must_contain` (case-insensitive) and
 optional `must_not_contain` checks.
 
 ## Run

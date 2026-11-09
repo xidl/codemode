@@ -1,22 +1,22 @@
 [
   {
     "id": "generate-from-idl",
-    "prompt": "In ~/xidl, find where `generate_from_idl` is defined. Answer with the file path and line number.",
+    "prompt": "In the xidl repository under test, find where `generate_from_idl` is defined. Answer with the file path and line number.",
     "must_contain": ["xidlc/src/driver/generate.rs", "generate_from_idl"]
   },
   {
     "id": "route-uniqueness",
-    "prompt": "In ~/xidl, what does `validate_unique_route_bindings` check, and which module/file owns it?",
+    "prompt": "In the xidl repository under test, what does `validate_unique_route_bindings` check, and which module/file owns it?",
     "must_contain": ["rest_hir", "route"]
   },
   {
     "id": "typescript-codegen",
-    "prompt": "In ~/xidl, find the file that defines `TypescriptCodegen`.",
+    "prompt": "In the xidl repository under test, find the file that defines `TypescriptCodegen`.",
     "must_contain": ["typescript/mod.rs"]
   },
   {
     "id": "external-plugin",
-    "prompt": "In ~/xidl, where is `PluginClient::spawn` defined, and what binary naming convention does it use for external plugins?",
+    "prompt": "In the xidl repository under test, where is `PluginClient::spawn` defined, and what binary naming convention does it use for external plugins?",
     "must_contain": ["jsonrpc/ipc.rs", "xidl-"]
   }
 ]

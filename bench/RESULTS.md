@@ -1,7 +1,7 @@
 # WorkBuddy DeepSeek results
 
 Model: `remote/workbuddy/deepseek-v4.1-flash`
-Agent: `codex exec` (same system prompt, same repo `~/xidl`)
+Agent: `codex exec` (same system prompt, same `$BENCH_REPO` checkout)
 Upstream: `codegraph` only
 Tasks: 3 code-navigation tasks × 3 runs per mode = 9 runs per mode
 

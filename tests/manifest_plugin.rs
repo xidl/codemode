@@ -42,16 +42,12 @@ struct McpToolResult {
     any structuredContent;
 };
 
-struct DemoDefaultEchoInput {
-    string message;
-};
-
 @mcp_server("demo")
 @mcp_namespace("default")
 interface DemoDefaultApi {
     @mcp_tool("echo")
     @mcp_read_only
-    McpToolResult echo(in DemoDefaultEchoInput input);
+    McpToolResult echo(string message);
 };
 "#;
 
@@ -65,8 +61,11 @@ fn external_plugin_generates_manifest_from_idl() {
     assert_eq!(namespace.tools.len(), 1);
     assert_eq!(namespace.tools[0].js, "echo");
     assert_eq!(namespace.tools[0].mcp, "echo");
-    assert_eq!(namespace.tools[0].input, "DemoDefaultEchoInput");
     assert_eq!(namespace.tools[0].output, "McpToolResult");
+    assert_eq!(namespace.tools[0].params.len(), 1);
+    assert_eq!(namespace.tools[0].params[0].name, "message");
+    assert_eq!(namespace.tools[0].params[0].wire, "message");
+    assert!(namespace.tools[0].params[0].required);
     assert!(namespace.tools[0].read_only);
     assert!(!namespace.tools[0].destructive);
     assert!(!namespace.tools[0].idempotent);
@@ -79,10 +78,9 @@ fn plugin_rejects_missing_server_annotation() {
 #pragma xidlc package demo
 #pragma xidlc version 1.0.0
 struct McpToolResult { boolean isError; sequence<any> content; any structuredContent; };
-struct DemoDefaultEchoInput { string message; };
 interface DemoDefaultApi {
     @mcp_tool("echo")
-    McpToolResult echo(in DemoDefaultEchoInput input);
+    McpToolResult echo(string message);
 };
 "#;
     let err = with_plugin_on_path(|| manifest::generate("demo", idl)).unwrap_err();
@@ -94,7 +92,7 @@ fn validate_rejects_unknown_tool() {
     use std::collections::BTreeMap;
 
     use xidl_codemode::catalog::ServerCatalog;
-    use xidl_codemode::manifest_types::{Manifest, ManifestNamespace, ManifestTool};
+    use xidl_codemode::manifest_types::{Manifest, ManifestNamespace, ManifestParam, ManifestTool};
 
     let manifest = Manifest {
         version: 1,
@@ -107,8 +105,12 @@ fn validate_rejects_unknown_tool() {
                 tools: vec![ManifestTool {
                     js: "echo".into(),
                     mcp: "missing".into(),
-                    input: "DemoDefaultEchoInput".into(),
                     output: "McpToolResult".into(),
+                    params: vec![ManifestParam {
+                        name: "message".into(),
+                        wire: "message".into(),
+                        required: true,
+                    }],
                     read_only: true,
                     destructive: false,
                     idempotent: false,

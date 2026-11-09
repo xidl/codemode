@@ -3,7 +3,7 @@ set -euo pipefail
 
 MODEL="${BENCH_MODEL:-remote/workbuddy/deepseek-v4.1-flash}"
 CODEMODE_BIN="${CODEMODE_BIN:-$(pwd)/target/release/xidl-codemode}"
-REPO="${BENCH_REPO:-~/xidl}"
+REPO="${BENCH_REPO:-$PWD/../xidl}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${BENCH_OUT:-$ROOT/bench/results}"
 RUNS="${BENCH_RUNS:-3}"
@@ -15,9 +15,9 @@ TASK_IDS=(
   "external-plugin"
 )
 TASK_PROMPTS=(
-  "In ~/xidl, find where generate_from_idl is defined. Answer with the file path and line number."
-  "In ~/xidl, find the file that defines TypescriptCodegen. Answer with the file path."
-  "In ~/xidl, where is PluginClient::spawn defined, and what binary naming convention does it use for external plugins?"
+  "In the xidl repository under test, find where generate_from_idl is defined. Answer with the file path and line number."
+  "In the xidl repository under test, find the file that defines TypescriptCodegen. Answer with the file path."
+  "In the xidl repository under test, where is PluginClient::spawn defined, and what binary naming convention does it use for external plugins?"
 )
 TASK_NEEDLES=(
   "xidlc/src/driver/generate.rs"
