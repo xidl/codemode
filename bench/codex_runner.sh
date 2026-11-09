@@ -6,6 +6,7 @@ CODEMODE_BIN="${CODEMODE_BIN:-$(pwd)/target/release/xidl-codemode}"
 REPO="${BENCH_REPO:-~/xidl}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${BENCH_OUT:-$ROOT/bench/results}"
+RUNS="${BENCH_RUNS:-3}"
 mkdir -p "$OUT"
 
 TASK_IDS=(
@@ -70,7 +71,7 @@ EOF
 }
 
 run_one() {
-  local mode="$1" id="$2" prompt="$3" needle="$4"
+  local mode="$1" id="$2" prompt="$3" needle="$4" run="$5"
   local home final events start end
   home="$(make_home "$mode")"
   final="$home/final.txt"
@@ -106,15 +107,17 @@ NODE
   else
     correct="false"
   fi
-  printf '{"mode":"%s","task":"%s","correct":%s,"usage":%s,"duration_ms":%d}\n' \
-    "$mode" "$id" "$correct" "$usage" "$((end - start))" | tee -a "$OUT/codex-results.jsonl"
+  printf '{"run":%d,"mode":"%s","task":"%s","correct":%s,"usage":%s,"duration_ms":%d}\n' \
+    "$run" "$mode" "$id" "$correct" "$usage" "$((end - start))" | tee -a "$OUT/codex-results.jsonl"
 }
 
 : > "$OUT/codex-results.jsonl"
-for mode in codemode raw; do
-  for i in "${!TASK_IDS[@]}"; do
-    echo "[$mode] ${TASK_IDS[$i]}" >&2
-    run_one "$mode" "${TASK_IDS[$i]}" "${TASK_PROMPTS[$i]}" "${TASK_NEEDLES[$i]}"
+for run in $(seq 1 "$RUNS"); do
+  for mode in codemode raw; do
+    for i in "${!TASK_IDS[@]}"; do
+      echo "[run $run][$mode] ${TASK_IDS[$i]}" >&2
+      run_one "$mode" "${TASK_IDS[$i]}" "${TASK_PROMPTS[$i]}" "${TASK_NEEDLES[$i]}" "$run"
+    done
   done
 done
 
