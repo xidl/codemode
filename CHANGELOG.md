@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/xidl/codemode/compare/v0.1.0...v0.1.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* harden runtime and release workflow ([4c5d36d](https://github.com/xidl/codemode/commit/4c5d36dff7380d4062693c3c29db88c75761619d))
+
 ## 0.1.0 (2026-11-09)
 
 
