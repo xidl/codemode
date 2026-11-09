@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashSet};
 
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 use crate::catalog::{
     is_valid_ident, namespace_for, pascal_case, sanitize_ident, ServerCatalog, ToolInfo,
@@ -109,7 +109,6 @@ struct IdlBuilder {
     used: HashSet<String>,
     methods: Vec<String>,
     result_struct: bool,
-    warnings: Vec<String>,
 }
 
 impl IdlBuilder {
@@ -123,7 +122,6 @@ impl IdlBuilder {
             used: HashSet::new(),
             methods: Vec::new(),
             result_struct: false,
-            warnings: Vec::new(),
         }
     }
 
@@ -134,12 +132,6 @@ impl IdlBuilder {
             self.server_pascal, self.namespace_pascal, tool_pascal
         ));
         self.emit_struct(&input_name, &tool.input_schema);
-        if tool.output_schema.is_some() {
-            self.warnings.push(format!(
-                "tool {} has outputSchema; using McpToolResult (typed output not implemented)",
-                tool.name
-            ));
-        }
         self.result_struct = true;
         let method = method_name(&tool.name);
         let mut annotations = String::new();
@@ -264,8 +256,6 @@ impl IdlBuilder {
             return self.type_for_kind("object", schema, name_hint);
         }
         if schema.get("$ref").is_some() {
-            self.warnings
-                .push(format!("$ref in {name_hint} degraded to any"));
             return "any".to_string();
         }
         "any".to_string()
@@ -372,12 +362,4 @@ fn short_type(schema: &Value) -> String {
         Some("object") => "object".into(),
         _ => "any".into(),
     }
-}
-
-pub fn schema_property_names(schema: &Value) -> Vec<String> {
-    schema
-        .get("properties")
-        .and_then(Value::as_object)
-        .map(|properties: &Map<String, Value>| properties.keys().cloned().collect())
-        .unwrap_or_default()
 }

@@ -116,21 +116,18 @@ pub fn execute(
         }
     };
 
-    let result = run_js(
-        bridge.clone(),
-        code,
-        &manifest_json,
+    let result = run_js(RunContext {
+        bridge: bridge.clone(),
+        code: code.to_string(),
+        manifest_json,
         deadline,
-        logs.clone(),
-        traces.clone(),
-        calls.clone(),
-    );
+        logs: logs.clone(),
+        traces: traces.clone(),
+        calls: calls.clone(),
+    });
     let duration_ms = started.elapsed().as_millis() as u64;
-    let mut logs = logs.lock().map(|logs| logs.clone()).unwrap_or_default();
-    let traces = traces
-        .lock()
-        .map(|traces| traces.clone())
-        .unwrap_or_default();
+    let mut logs = logs.lock().expect("sandbox log mutex poisoned").clone();
+    let traces = traces.lock().expect("sandbox trace mutex poisoned").clone();
     if logs.len() > MAX_LOGS {
         logs.truncate(MAX_LOGS);
     }
@@ -145,8 +142,11 @@ pub fn execute(
             error: outcome.error,
         },
         Err(error) => {
+            let lower = error.0.to_ascii_lowercase();
             let code = if Instant::now() >= deadline {
                 "timeout"
+            } else if lower.contains("out of memory") {
+                "oom"
             } else {
                 "js_error"
             };
@@ -167,16 +167,26 @@ pub fn execute(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn run_js(
+struct RunContext {
     bridge: Arc<UpstreamManager>,
-    code: &str,
-    manifest_json: &str,
+    code: String,
+    manifest_json: String,
     deadline: Instant,
     logs: Arc<Mutex<Vec<LogEntry>>>,
     traces: Arc<Mutex<Vec<ToolCallTrace>>>,
     calls: Arc<AtomicUsize>,
-) -> std::result::Result<JsOutcome, (String, Option<String>)> {
+}
+
+fn run_js(context: RunContext) -> std::result::Result<JsOutcome, (String, Option<String>)> {
+    let RunContext {
+        bridge,
+        code,
+        manifest_json,
+        deadline,
+        logs,
+        traces,
+        calls,
+    } = context;
     let runtime = Runtime::new().map_err(|err| (format!("create quickjs runtime: {err}"), None))?;
     runtime.set_memory_limit(128 * 1024 * 1024);
     runtime.set_max_stack_size(1024 * 1024);
@@ -187,7 +197,7 @@ fn run_js(
     context.with(|ctx| {
         let globals = ctx.globals();
         globals
-            .set("__xidl_manifest", manifest_json)
+            .set("__xidl_manifest", manifest_json.as_str())
             .map_err(|err| (format!("inject manifest: {err}"), None))?;
 
         let call_bridge = bridge.clone();
@@ -227,15 +237,16 @@ fn run_js(
                 let call_started = Instant::now();
                 let result = call_bridge.call(&server, &tool, arguments, remaining);
                 let duration_ms = call_started.elapsed().as_millis() as u64;
-                if let Ok(mut traces) = traces.lock() {
-                    traces.push(ToolCallTrace {
+                traces
+                    .lock()
+                    .expect("sandbox trace mutex poisoned")
+                    .push(ToolCallTrace {
                         server: server.clone(),
                         tool: tool.clone(),
                         duration_ms,
                         ok: result.is_ok(),
                         error: result.as_ref().err().map(|err| err.to_string()),
                     });
-                }
                 match result {
                     Ok(value) => serde_json::to_string(&value).map_err(|err| {
                         rquickjs::Error::new_from_js_message(
@@ -259,16 +270,15 @@ fn run_js(
 
         let log_sink = logs.clone();
         let log_fn = Function::new(ctx.clone(), move |level: String, message: String| {
-            if let Ok(mut logs) = log_sink.lock() {
-                if logs.len() >= MAX_LOGS {
-                    return;
-                }
-                let used: usize = logs.iter().map(|entry| entry.message.len()).sum();
-                if used + message.len() > MAX_LOG_BYTES {
-                    return;
-                }
-                logs.push(LogEntry { level, message });
+            let mut logs = log_sink.lock().expect("sandbox log mutex poisoned");
+            if logs.len() >= MAX_LOGS {
+                return;
             }
+            let used: usize = logs.iter().map(|entry| entry.message.len()).sum();
+            if used + message.len() > MAX_LOG_BYTES {
+                return;
+            }
+            logs.push(LogEntry { level, message });
         })
         .map_err(|err| (format!("create __xidl_log: {err}"), None))?;
         globals
@@ -278,7 +288,7 @@ fn run_js(
         ctx.eval::<(), _>(BOOTSTRAP)
             .map_err(|err| (format!("bootstrap JS: {err}"), None))?;
 
-        let code_json = serde_json::to_string(code)
+        let code_json = serde_json::to_string(&code)
             .map_err(|err| (format!("encode user code: {err}"), None))?;
         let wrapper = wrapper_script(&code_json, MAX_RESULT_BYTES);
         match ctx.eval::<String, _>(wrapper.as_str()) {

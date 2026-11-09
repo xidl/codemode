@@ -113,6 +113,9 @@ fn execute_tool() -> Tool {
     Tool::new(
         "execute",
         "Execute JavaScript in a QuickJS sandbox. MCP tools are injected as `mcp.<server>.<tool>(args)`.",
-        schema.as_object().cloned().unwrap_or_default(),
+        schema
+            .as_object()
+            .cloned()
+            .expect("execute tool schema must be a JSON object"),
     )
 }

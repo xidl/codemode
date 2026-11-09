@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, HashMap};
-use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
+use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::time::Duration;
 
-use rmcp::model::{CallToolRequestParams, CallToolResult, PaginatedRequestParams, Tool};
+use rmcp::model::{CallToolRequestParams, PaginatedRequestParams, Tool};
 use rmcp::service::{RunningService, ServiceExt};
 use rmcp::transport::streamable_http_client::{
     StreamableHttpClientTransport, StreamableHttpClientTransportConfig,
@@ -15,7 +15,7 @@ use crate::config::{ServerSpec, Transport};
 use crate::error::{Error, Result};
 
 pub struct UpstreamManager {
-    tx: Option<Sender<BridgeRequest>>,
+    tx: Option<SyncSender<BridgeRequest>>,
     join: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -34,15 +34,11 @@ enum BridgeRequest {
 }
 
 impl UpstreamManager {
-    pub fn start(specs: Vec<ServerSpec>) -> Result<Self> {
-        let (tx, rx) = mpsc::channel();
-        let specs: BTreeMap<String, ServerSpec> = specs
-            .into_iter()
-            .map(|spec| (spec.name.clone(), spec))
-            .collect();
+    pub fn start() -> Result<Self> {
+        let (tx, rx) = mpsc::sync_channel(16);
         let join = std::thread::Builder::new()
             .name("xidl-codemode-bridge".into())
-            .spawn(move || bridge_thread(rx, specs))
+            .spawn(move || bridge_thread(rx))
             .map_err(Error::Io)?;
         Ok(Self {
             tx: Some(tx),
@@ -101,7 +97,7 @@ impl Drop for UpstreamManager {
     }
 }
 
-fn bridge_thread(rx: Receiver<BridgeRequest>, _specs: BTreeMap<String, ServerSpec>) {
+fn bridge_thread(rx: Receiver<BridgeRequest>) {
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -268,14 +264,4 @@ fn to_tool_info(tool: Tool) -> ToolInfo {
         idempotent: annotations.idempotent_hint.unwrap_or(false),
         open_world: annotations.open_world_hint.unwrap_or(false),
     }
-}
-
-pub fn call_result_text(result: &CallToolResult) -> String {
-    let mut out = String::new();
-    for block in &result.content {
-        if let Some(text) = block.as_text() {
-            out.push_str(&text.text);
-        }
-    }
-    out
 }
