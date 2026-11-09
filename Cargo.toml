@@ -1,0 +1,53 @@
+[package]
+name = "xidl-codemode"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Code-mode MCP gateway driven by xidl"
+repository = "https://github.com/xidl/codemode"
+readme = "README.md"
+keywords = ["mcp", "xidl", "quickjs", "code-mode"]
+categories = ["development-tools"]
+
+[[bin]]
+name = "xidl-codemode"
+path = "src/main.rs"
+
+[[bin]]
+name = "xidl-codemode-manifest"
+path = "src/bin/xidl-codemode-manifest.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+futures = "0.3"
+reqwest = { version = "0.13", default-features = false, features = [
+  "rustls",
+  "json",
+] }
+rmcp = { version = "3.9", features = [
+  "server",
+  "client",
+  "transport-io",
+  "transport-child-process",
+  "transport-streamable-http-client-reqwest",
+] }
+rquickjs = "0.14"
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+toml = "0.9"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+xidlc = { version = "0.111", default-features = false }
+xidl-parser = "0.111"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = "thin"
+strip = true

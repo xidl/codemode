@@ -1,0 +1,25 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+      - id: check-case-conflict
+      - id: check-merge-conflict
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+      - id: trailing-whitespace
+
+  - repo: local
+    hooks:
+      - id: taplo
+        name: taplo fmt
+        language: system
+        types_or: [toml]
+        entry: taplo fmt
+
+      - id: cargo-fmt
+        name: cargo fmt
+        language: system
+        types: [rust]
+        pass_filenames: false
+        entry: cargo fmt --all -- --check
