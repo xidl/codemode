@@ -624,12 +624,8 @@ JS 不写磁盘；工作区只放 `agents.md` / IDL。沙箱本身没有文件�
 ```text
 xidl-codemode/
   Cargo.toml
-  crates/
-    xidl-codemode-manifest/
-      Cargo.toml
-      src/
-        main.rs
-        plugin.rs
+  src/bin/
+    xidl-codemode-manifest.rs
   src/
     main.rs
     lib.rs
@@ -686,9 +682,9 @@ xidl-codemode/
   PLAN.md
 ```
 
-主 crate 做 codemode 编排和 MCP server；`xidl-codemode-manifest` 是独立
-external xidl plugin binary。两者在同一个 Cargo workspace 中构建，安装时
-必须一起进入 PATH。
+主 crate 做 codemode 编排和 MCP server；`xidl-codemode-manifest` 是同一
+package 下的独立 external xidl plugin binary。两者在同一个 `cargo build`
+中构建，安装时必须一起进入 PATH。
 
 依赖草案：
 

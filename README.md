@@ -147,7 +147,8 @@ xidlc gen --out-dir /tmp/out codemode-manifest .codemode/.internal/codegraph.bun
 
 ## Benchmarks
 
-See [`bench/DESIGN.md`](bench/DESIGN.md) for the code-mode vs direct-MCP
+See [`bench/DESIGN.md`](bench/DESIGN.md) and
+[`bench/RESULTS.md`](bench/RESULTS.md) for the code-mode vs direct-MCP
 experiment (token usage, turns, correctness) using WorkBuddy DeepSeek.
 
 ## License

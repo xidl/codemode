@@ -1,0 +1,6 @@
+{"mode":"codemode","task":"generate-from-idl","correct":true,"usage":{"input_tokens":33071,"output_tokens":115,"total_tokens":33186},"duration_ms":8194}
+{"mode":"codemode","task":"typescript-codegen","correct":true,"usage":{"input_tokens":47051,"output_tokens":218,"total_tokens":47269},"duration_ms":9486}
+{"mode":"codemode","task":"external-plugin","correct":true,"usage":{"input_tokens":49811,"output_tokens":428,"total_tokens":50239},"duration_ms":13208}
+{"mode":"raw","task":"generate-from-idl","correct":true,"usage":{"input_tokens":33483,"output_tokens":110,"total_tokens":33593},"duration_ms":7639}
+{"mode":"raw","task":"typescript-codegen","correct":true,"usage":{"input_tokens":50891,"output_tokens":489,"total_tokens":51380},"duration_ms":9788}
+{"mode":"raw","task":"external-plugin","correct":true,"usage":{"input_tokens":93159,"output_tokens":585,"total_tokens":93744},"duration_ms":15749}

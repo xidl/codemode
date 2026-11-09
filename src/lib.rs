@@ -39,7 +39,7 @@ pub struct BuiltApp {
 pub fn build(options: &BuildOptions) -> Result<BuiltApp> {
     ensure_plugin_on_path();
     let specs = config::load(options.config.as_deref())?;
-    let bridge = Arc::new(UpstreamManager::start(specs.clone())?);
+    let bridge = Arc::new(UpstreamManager::start()?);
     std::fs::create_dir_all(&options.workspace).map_err(|err| {
         Error::Workspace(format!("create {}: {err}", options.workspace.display()))
     })?;
