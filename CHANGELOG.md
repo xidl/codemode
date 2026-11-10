@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/xidl/codemode/compare/v0.2.0...v0.3.0) (2026-11-10)
+
+
+### Features
+
+* inject only upstream MCP instructions ([13f3352](https://github.com/xidl/codemode/commit/13f335228e76db45b956689d16757e234597d31e))
+
 ## [0.2.0](https://github.com/xidl/codemode/compare/v0.1.1...v0.2.0) (2026-11-09)
 
 
