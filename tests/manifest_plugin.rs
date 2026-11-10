@@ -47,7 +47,10 @@ struct McpToolResult {
 interface DemoDefaultApi {
     @mcp_tool("echo")
     @mcp_read_only
-    McpToolResult echo(string message);
+    McpToolResult echo(
+        string message,
+        @optional @rename("tag") string label
+    );
 };
 "#;
 
@@ -62,10 +65,13 @@ fn external_plugin_generates_manifest_from_idl() {
     assert_eq!(namespace.tools[0].js, "echo");
     assert_eq!(namespace.tools[0].mcp, "echo");
     assert_eq!(namespace.tools[0].output, "McpToolResult");
-    assert_eq!(namespace.tools[0].params.len(), 1);
+    assert_eq!(namespace.tools[0].params.len(), 2);
     assert_eq!(namespace.tools[0].params[0].name, "message");
     assert_eq!(namespace.tools[0].params[0].wire, "message");
     assert!(namespace.tools[0].params[0].required);
+    assert_eq!(namespace.tools[0].params[1].name, "label");
+    assert_eq!(namespace.tools[0].params[1].wire, "tag");
+    assert!(!namespace.tools[0].params[1].required);
     assert!(namespace.tools[0].read_only);
     assert!(!namespace.tools[0].destructive);
     assert!(!namespace.tools[0].idempotent);

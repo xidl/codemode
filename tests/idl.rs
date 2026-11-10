@@ -1,6 +1,38 @@
 use serde_json::json;
 use xidl_codemode::catalog::{ServerCatalog, ToolInfo};
 use xidl_codemode::idl;
+use xidl_parser::hir::{
+    Annotation, Definition, Export, InterfaceDcl, InterfaceDclInner, OpDcl, Specification, TypeSpec,
+};
+
+fn find_interface<'a>(spec: &'a Specification, name: &str) -> Option<&'a InterfaceDcl> {
+    for definition in &spec.0 {
+        if let Definition::InterfaceDcl(interface) = definition {
+            if let InterfaceDclInner::InterfaceDef(def) = &interface.decl {
+                if def.header.ident == name {
+                    return Some(interface);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn find_operation<'a>(interface: &'a InterfaceDcl, name: &str) -> &'a OpDcl {
+    let InterfaceDclInner::InterfaceDef(def) = &interface.decl else {
+        panic!("interface is a forward declaration");
+    };
+    def.interface_body
+        .as_ref()
+        .expect("interface body")
+        .0
+        .iter()
+        .find_map(|export| match export {
+            Export::OpDcl(op) if op.ident == name => Some(op),
+            _ => None,
+        })
+        .expect("operation")
+}
 
 #[test]
 fn generates_namespace_idl_and_agents_md() {
@@ -51,15 +83,48 @@ fn generates_namespace_idl_and_agents_md() {
     assert!(idl.contains("@mcp_server(\"demo\")"));
     assert!(idl.contains("@mcp_namespace(\"issues\")"));
     assert!(idl.contains("@mcp_tool(\"issues.get\")"));
-    assert!(idl.contains("McpToolResult issues_get("));
-    assert!(idl.contains("int64 id,"));
-    assert!(idl.contains("@optional\n        string title\n"));
-    assert!(idl.contains("@optional\n        sequence<string> labels\n"));
-    assert!(!idl.contains("in DemoIssuesIssuesGetInput input"));
+    let typed = xidl_parser::parser::parser_text(idl).expect("parse generated IDL");
+    let hir = Specification::from(typed);
+    let interface = find_interface(&hir, "DemoIssuesApi").expect("DemoIssuesApi");
+    let get = find_operation(interface, "issues_get");
+    let params = get.parameter.as_ref().expect("parameters").0.clone();
+    let names: Vec<&str> = params
+        .iter()
+        .map(|param| param.declarator.0.as_str())
+        .collect();
+    assert_eq!(names, ["id", "title"]);
+    assert!(matches!(
+        &params[0].ty,
+        TypeSpec::IntegerType(xidl_parser::hir::IntegerType::I64)
+    ));
+    assert!(!params[0]
+        .annotations
+        .iter()
+        .any(|annotation| matches!(annotation, Annotation::Optional { .. })));
+    assert!(matches!(&params[1].ty, TypeSpec::StringType(_)));
+    assert!(params[1]
+        .annotations
+        .iter()
+        .any(|annotation| matches!(annotation, Annotation::Optional { .. })));
+    let list = find_operation(interface, "issues_list");
+    let list_params = list.parameter.as_ref().expect("list parameters").0.clone();
+    assert_eq!(list_params[0].declarator.0, "labels");
+    assert!(matches!(
+        &list_params[0].ty,
+        TypeSpec::SequenceType(ref sequence)
+            if matches!(sequence.ty.as_ref(), TypeSpec::StringType(_))
+    ));
+    assert!(list_params[0]
+        .annotations
+        .iter()
+        .any(|annotation| matches!(annotation, Annotation::Optional { .. })));
     assert!(idl.contains("@mcp_read_only"));
     assert!(idl.contains("@mcp_idempotent"));
     assert!(generated
         .agents_md
-        .contains("mcp.demo.issues_get(id: number"));
+        .contains("mcp.demo.issues_get(id: number, title?: string)"));
+    assert!(generated
+        .agents_md
+        .contains("mcp.demo.issues_list(labels?: string[])"));
     assert!(generated.bundle.contains("interface DemoIssuesApi"));
 }

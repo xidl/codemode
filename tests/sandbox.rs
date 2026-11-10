@@ -54,12 +54,12 @@ fn fake_server() -> RuntimeServer {
                         params: vec![
                             ManifestParam {
                                 name: "first".into(),
-                                wire: "first".into(),
+                                wire: "first_wire".into(),
                                 required: true,
                             },
                             ManifestParam {
                                 name: "second".into(),
-                                wire: "second".into(),
+                                wire: "second_wire".into(),
                                 required: false,
                             },
                         ],
@@ -101,7 +101,10 @@ fn positional_arguments_map_to_wire_object() {
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0].0, "fake");
     assert_eq!(calls[0].1, "echo");
-    assert_eq!(calls[0].2, json!({ "first": "hello", "second": 7 }));
+    assert_eq!(
+        calls[0].2,
+        json!({ "first_wire": "hello", "second_wire": 7 })
+    );
 }
 
 #[test]
@@ -116,13 +119,16 @@ fn optional_positional_argument_can_be_omitted() {
     );
     assert!(outcome.ok, "{:?}", outcome.error);
     let calls = fake.calls.lock().expect("fake caller mutex poisoned");
-    assert_eq!(calls[0].2, json!({ "first": "hello" }));
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].2, json!({ "first_wire": "hello" }));
 }
 
 #[test]
 fn missing_required_positional_argument_fails() {
+    let fake = Arc::new(FakeCaller::default());
+    let caller: Arc<dyn ToolCaller> = fake.clone();
     let outcome = sandbox::execute(
-        &bridge(),
+        &caller,
         &[fake_server()],
         "return mcp.fake.echo();",
         Duration::from_secs(5),
@@ -134,12 +140,19 @@ fn missing_required_positional_argument_fails() {
         error.message.contains("missing required argument first"),
         "{error:?}"
     );
+    assert!(fake
+        .calls
+        .lock()
+        .expect("fake caller mutex poisoned")
+        .is_empty());
 }
 
 #[test]
 fn extra_positional_argument_fails() {
+    let fake = Arc::new(FakeCaller::default());
+    let caller: Arc<dyn ToolCaller> = fake.clone();
     let outcome = sandbox::execute(
-        &bridge(),
+        &caller,
         &[fake_server()],
         "return mcp.fake.echo('a', 1, 2);",
         Duration::from_secs(5),
@@ -148,6 +161,11 @@ fn extra_positional_argument_fails() {
     let error = outcome.error.unwrap();
     assert_eq!(error.code, "js_error");
     assert!(error.message.contains("too many arguments"), "{error:?}");
+    assert!(fake
+        .calls
+        .lock()
+        .expect("fake caller mutex poisoned")
+        .is_empty());
 }
 
 #[test]
