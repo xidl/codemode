@@ -25,7 +25,7 @@ MCP config
 upstream MCP servers --tools/list--> catalog
    |                                   |
    |                                   +--> generated namespace IDL
-   |                                   +--> agents.md index/signatures
+   |                                   +--> agents.md (upstream instructions only)
    |                                   +--> external xidlc plugin
    |                                             |
    |                                             v
@@ -52,9 +52,20 @@ By default the gateway writes:
     github.bundle.idl
 ```
 
-`agents.md` and `*.idl` are generated. Do not edit them: IDL is generated only,
-there is no hand-written override path. If a generated IDL is invalid, treat it
-as a bug and use `xidl-codemode bug-report`.
+`*.idl` is generated and must not be edited; there is no hand-written override
+path. If a generated IDL is invalid, treat it as a bug and use
+`xidl-codemode bug-report`. `agents.md` exists only when the upstream MCP server
+provides `initialize.instructions`; it is not a generated tool/signature index.
+
+The model discovers APIs from the filesystem. The codemode `instructions` only
+state the workspace convention and call shape:
+
+```bash
+rg --files .codemode
+rg "@mcp_tool|string owner|int64 issue_number" .codemode/github/*.idl
+```
+
+Parameter names, order, types, and optionality live only in the IDL files.
 
 The runtime manifest is produced by the external xidl plugin
 `xidl-codemode-manifest` from the bundle IDL. `xidlc` discovers it through

@@ -33,12 +33,13 @@ pub fn generate(catalog: &ServerCatalog) -> GeneratedServer {
 
     let mut namespaces = Vec::new();
     let mut bundle_parts = Vec::new();
-    let mut agents = String::new();
-    agents.push_str(&format!("# {}\n\n", catalog.name));
-    agents.push_str(&format!(
-        "Use the `execute` tool and call APIs as `mcp.{}.<tool>(args)`.\n\n",
-        catalog.js_name
-    ));
+    let agents = catalog
+        .instructions
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(|text| format!("{text}\n"))
+        .unwrap_or_default();
 
     for (namespace, tools) in grouped {
         let mut builder = IdlBuilder::new(&catalog.name, &namespace);
@@ -56,32 +57,6 @@ pub fn generate(catalog: &ServerCatalog) -> GeneratedServer {
             name: namespace.clone(),
             idl,
         });
-
-        agents.push_str(&format!("## /{}/{}.idl\n\n", catalog.name, namespace));
-        for tool in &tools {
-            let js_name = method_name(&tool.name);
-            agents.push_str(&format!(
-                "- `mcp.{}.{}({})`",
-                catalog.js_name,
-                js_name,
-                compact_args(&tool.input_schema)
-            ));
-            if tool.read_only {
-                agents.push_str(" [read-only]");
-            }
-            let first_line = tool
-                .description
-                .lines()
-                .map(str::trim)
-                .find(|line| !line.is_empty())
-                .unwrap_or("");
-            if !first_line.is_empty() {
-                agents.push_str(" — ");
-                agents.push_str(first_line);
-            }
-            agents.push('\n');
-        }
-        agents.push('\n');
     }
 
     let bundle = format!(
@@ -376,42 +351,4 @@ fn doc_comment_indented(text: &str, indent: usize) -> String {
 
 fn escape(text: &str) -> String {
     text.replace('\\', "\\\\").replace('"', "\\\"")
-}
-
-fn compact_args(schema: &Value) -> String {
-    let Some(properties) = schema.get("properties").and_then(Value::as_object) else {
-        return String::new();
-    };
-    let required: HashSet<&str> = schema
-        .get("required")
-        .and_then(Value::as_array)
-        .map(|values| values.iter().filter_map(Value::as_str).collect())
-        .unwrap_or_default();
-    let mut parts = Vec::new();
-    for (key, value) in properties {
-        let ty = short_type(value);
-        if required.contains(key.as_str()) {
-            parts.push(format!("{key}: {ty}"));
-        } else {
-            parts.push(format!("{key}?: {ty}"));
-        }
-    }
-    parts.join(", ")
-}
-
-fn short_type(schema: &Value) -> String {
-    match schema.get("type").and_then(Value::as_str) {
-        Some("string") => "string".into(),
-        Some("integer") | Some("number") => "number".into(),
-        Some("boolean") => "boolean".into(),
-        Some("array") => format!(
-            "{}[]",
-            schema
-                .get("items")
-                .map(short_type)
-                .unwrap_or_else(|| "any".into())
-        ),
-        Some("object") => "object".into(),
-        _ => "any".into(),
-    }
 }

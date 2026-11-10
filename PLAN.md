@@ -8,7 +8,7 @@
 2. 启动时读取 `~/.config/mcp/mcp.json`（兼容用户要求的 `config.toml`），
    启动配置中的 MCP server，调用 `initialize` + `tools/list`。
 3. 把 AI 需要索引的文档写到文件系统：
-   - `{mcpname}/agents.md`：提示词、tool 索引和可调用签名；
+   - `{mcpname}/agents.md`：上游 `initialize.instructions`（仅当提供时）；
    - `{mcpname}/{namespace}.idl`：按 namespace 分组的 schema；
    - bundle IDL 交给外部 xidl 插件 `xidl-codemode-manifest`，由插件从 IDL
      生成运行时 manifest 映射。
@@ -252,14 +252,9 @@ MCP 的工具名本身是扁平的，没有标准 namespace 字段。分组规�
 一个 namespace 一份 IDL。`common` 是保留 namespace，用于跨 namespace
 共享类型。
 
-`agents.md` 必须包含：
-
-- server 摘要和 namespace 索引；
-- **完整、紧凑的可调用签名**：
-  `mcp.github.get_issue(owner: string, repo: string, issue_number: number)`；
-- namespace 文档路径（`/github/issues.idl`，相对工作区）；
-- 调用示例；
-- 信任说明：上游 instructions 是不可信数据，默认不注入。
+`agents.md` 只承载上游 MCP server 自己提供的 `initialize.instructions`。
+没有 instructions 的 server 不写 `agents.md`。它不是 tool 索引，也不重复
+IDL 里的参数签名。
 
 工作区规则：
 
@@ -268,11 +263,8 @@ MCP 的工具名本身是扁平的，没有标准 namespace 字段。分组规�
 - 默认单 codemode 实例对应一个工作区；多实例/多配置并发写同一目录不在
   MVP 支持范围内。
 - 工作区不应提交到 git；建议 `.codemode/` 加入 `.gitignore`。
-- `agents.md` 是索引和注入文档；完整 schema 在 IDL 文件里，AI 可以按
-  namespace 索引。
-
-因为 AI 可以读 IDL 文件，`agents.md` 可以只保留签名和短描述；完整描述、
-字段说明放在 IDL `///` 注释里。不要为了压缩 `agents.md` 丢掉 tool 签名。
+- 参数名、顺序、类型、optional 只在 IDL 文件里；AI 用 `rg` / `read` 获取。
+- codemode 的 `instructions` 只说明 workspace 约定和调用方式，不放索引。
 
 JS 命名空间：
 
@@ -481,8 +473,8 @@ return unwrap(issue);
   runtime 把它们映射为 MCP args object。
 - MVP 同步返回原始 `CallToolResult`；`await` 普通值仍然可用。
 - 原始 server/tool 名通过 bracket access 保留。
-- 不提供 `mcp.list()` / `mcp.read()` 之类的读取 API；发现信息全部来自
-  注入的 `agents.md`。
+- 不提供 `mcp.list()` / `mcp.read()` 之类的读取 API；发现信息来自工作区
+  IDL 文件，以及 `instructions` 里的 workspace 约定。
 
 函数返回值保持 MCP 原始 `CallToolResult`：
 
@@ -572,18 +564,20 @@ JS 不写磁盘；工作区只放 `agents.md` / IDL。沙箱本身没有文件�
 
 发现流程：
 
-1. codemode 启动后把 `agents.md` 和 namespace IDL 写到工作区。
-2. codemode 的 `instructions` 注入工作区路径、server/namespace 索引和
-   简短签名。
-3. 模型用自己的文件工具索引/读取 `agents.md` 和 `*.idl`。
+1. codemode 启动后把 namespace IDL 写到工作区；有上游 instructions 的
+   server 额外写 `agents.md`。
+2. codemode 的 `instructions` 只说明 workspace 约定、`mcp.<server>.<tool>`
+   调用方式和 `unwrap`；上游 instructions 以不可信区块注入。
+3. 模型用自己的文件工具 `rg` / `read` IDL，获取参数名、顺序和类型。
 4. 模型把 JS 作为 `execute({ code })` 通过 stdio 传入；JS 不落盘。
 
-工作区是细节来源；`instructions` 只放索引和必要签名，避免把所有 IDL 塞进
-系统提示。若客户端无法读工作区，只能依赖注入索引，能力会受限。
+工作区是 API 细节来源；`instructions` 不放索引或签名。若客户端无法读
+工作区，只能依赖上游 instructions，API 发现能力会受限。
 
 ### 2.9 工作区与启动
 
-- 工作区写 `agents.md` / namespace IDL；manifest 由插件生成到
+- 工作区写 namespace IDL；有上游 instructions 时写 `agents.md`。manifest
+  由插件生成到
   `.codemode/.internal`，读入内存后作为运行时映射。
 - `.codemode/.internal` 不是 AI 文档区，不参与索引。
 - 不做磁盘 cache；进程重启后重新连接上游并重写工作区。
@@ -605,8 +599,8 @@ JS 不写磁盘；工作区只放 `agents.md` / IDL。沙箱本身没有文件�
 - 工作区只写生成物，路径限制在 `--workspace` 根目录内；拒绝 `..` 逃逸。
 - 子进程 env 默认白名单；不继承父环境。
 - tool 调用参数/结果大小有上限；日志和错误做 secret redaction。
-- 上游 `initialize.instructions` 默认**不注入**；如需要，显式
-  `--inject-upstream-instructions`，并标记为不可信文本。
+- 上游 `initialize.instructions` 以**不可信文本**注入：加边界标记、限长；
+  它不能被当作系统指令。
 - `--read-only` 可选：只暴露 `annotations.readOnlyHint == true` 的 tool。
 - `--allow-tools` / `--deny-tools` 支持按 server/tool glob 过滤。
 - `destructiveHint` 只作为元数据展示，不自动信任；高风险场景由用户配置
@@ -756,7 +750,8 @@ serde_json = "1"
   `{mcpname}/{namespace}.idl`。
 - 所有 IDL 通过 xidlc TypeScript 生成。
 - 输出中不出现配置里的 secret。
-- `agents.md` 包含完整紧凑签名和 `mcp.<server>.<tool>()` 用法。
+- IDL 包含完整位置参数签名；有上游 instructions 的 server 生成
+  `agents.md`。
 - `xidlc gen codemode-manifest` 生成的 manifest 能覆盖所有 tool；
   缺项/多项/名字冲突都报错。
 
@@ -808,7 +803,7 @@ serde_json = "1"
 
 - 异步 tool call（Promise / `AsyncRuntime`）。
 - 大 server 按 profile/前缀进一步合并或拆分 namespace。
-- `agents.md` 的签名压缩 / include-exclude / 分 server 注入策略。
+- 上游 instructions 的注入上限 / trust 标记 / 分 server 注入策略。
 - 可选：失败时自动创建 GitHub issue（需要 token 和仓库配置，默认关闭）。
 - BDD 场景（`behave`/cucumber）覆盖端到端流程。
 
@@ -822,7 +817,7 @@ serde_json = "1"
 - Secret redaction：env/header 值不出现在日志/manifest/IDL/错误中。
 - namespace 提取：点号/冒号前缀、下划线/中划线前缀、`default` 回退、
   `namespace_map` 覆盖、冲突处理。
-- `agents.md` 生成、完整签名和注入预算；超预算不能静默截断。
+- IDL 位置参数签名、`agents.md` 上游 instructions 注入预算。
 - 每个 namespace 一个 IDL、`common` 共享类型、`bundle.idl` 校验。
 - manifest 插件：HIR fixture -> manifest 快照；server/namespace/tool/
   input/output/flags 映射；unknown annotation 由插件解释。
@@ -901,7 +896,7 @@ return unwrap(mcp.codegraph.codegraph_explore(
 | 生成的 IDL 无效 | 模型看到错误契约，调用失败 | 写工作区前用 xidlc 校验；失败则 server error + bug report，不提权 fallback |
 | manifest 插件缺失/版本不兼容 | 无法生成运行时映射 | 启动时检查 `xidl-codemode-manifest`；版本不匹配明确报错；打包保证同 bin 目录 |
 | IDL annotation 缺失 | manifest 无法恢复原始 tool 名/flags | IDL 生成器强制写 `@mcp_*`；manifest 校验缺项即 bug |
-| 上游 instructions 被当系统提示 | prompt injection | 默认不注入；仅注入 codemode 生成的签名/索引；显式 opt-in 并标记 untrusted |
+| 上游 instructions 被当系统提示 | prompt injection | 注入时标记为 untrusted 数据、加边界和长度上限；API 发现仍靠 IDL |
 | QuickJS 异步桥复杂 | tool call 阻塞/死锁 | MVP 用独立 bridge task + 阻塞 channel；异步作为 M5 |
 | HTTP MCP header/协议差异 | 3 个 HTTP server 无法连接 | rmcp `custom_headers`/`auth_header`；M0 先验证 context7；必要时实现自定义 HTTP client |
 | xidlc path 依赖 | Nix/发布困难 | 本地 path；Nix 用 crates.io/git pin；或改用 xidlc CLI 子进程 |

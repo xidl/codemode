@@ -210,10 +210,13 @@ async fn connect_and_discover(
         }
     };
     let tools = list_all_tools(client.peer()).await?;
+    let instructions = client
+        .peer_info()
+        .and_then(|info| info.instructions.clone());
     let catalog = ServerCatalog {
         name: spec.name.clone(),
         js_name: sanitize_ident(&spec.name),
-        instructions: None,
+        instructions,
         tools,
         namespace_map: BTreeMap::new(),
     };

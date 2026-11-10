@@ -39,7 +39,7 @@ fn generates_namespace_idl_and_agents_md() {
     let catalog = ServerCatalog {
         name: "demo".into(),
         js_name: "demo".into(),
-        instructions: None,
+        instructions: Some("Use graph tools carefully. Read the IDL for parameters.".into()),
         namespace_map: Default::default(),
         tools: vec![
             ToolInfo {
@@ -122,9 +122,8 @@ fn generates_namespace_idl_and_agents_md() {
     assert!(idl.contains("@mcp_idempotent"));
     assert!(generated
         .agents_md
-        .contains("mcp.demo.issues_get(id: number, title?: string)"));
-    assert!(generated
-        .agents_md
-        .contains("mcp.demo.issues_list(labels?: string[])"));
+        .contains("Use graph tools carefully. Read the IDL for parameters."));
+    assert!(!generated.agents_md.contains("mcp.demo"));
+    assert!(!generated.agents_md.contains("issues_get("));
     assert!(generated.bundle.contains("interface DemoIssuesApi"));
 }

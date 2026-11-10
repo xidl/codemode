@@ -13,7 +13,12 @@ pub fn write_server(root: &Path, generated: &GeneratedServer) -> Result<PathBuf>
     let server_dir = root.join(&generated.catalog.name);
     std::fs::create_dir_all(&server_dir)
         .map_err(|err| Error::Workspace(format!("create {}: {err}", server_dir.display())))?;
-    write_atomic(&server_dir.join("agents.md"), &generated.agents_md)?;
+    let agents_path = server_dir.join("agents.md");
+    if generated.agents_md.trim().is_empty() {
+        let _ = std::fs::remove_file(&agents_path);
+    } else {
+        write_atomic(&agents_path, &generated.agents_md)?;
+    }
     for namespace in &generated.namespaces {
         write_atomic(
             &server_dir.join(format!("{}.idl", namespace.name)),

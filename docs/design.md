@@ -18,7 +18,7 @@
 | D5 | Code mode 入口使用全局 `mcp.<server>.<tool>()` | API 直接注入 runtime，无 import/require 负担 |
 | D6 | 每次 execute 新建 QuickJS runtime | 强隔离，避免跨执行状态泄漏 |
 | D7 | MVP 使用同步宿主桥接，异步后置 | 先解决正确性，避免 QuickJS Promise 与 tokio 的复杂度 |
-| D8 | 对外只暴露 `execute` | 严格保持单一执行入口，发现信息走工作区文件 + 注入索引 |
+| D8 | 对外只暴露 `execute` | 严格保持单一执行入口，发现信息走 IDL 文件 + 最小 instructions |
 | D9 | 工具调用返回原始 `CallToolResult` | 不丢失 content/structuredContent/错误语义 |
 | D10 | 配置 JSON 为主、TOML 兼容 | 当前 Home Manager 实际生成的是 `mcp.json` |
 | D11 | Secret 默认不进入沙箱、日志和产物 | 配置里有 token/header，泄漏风险高 |
@@ -29,10 +29,10 @@
 | D16 | 默认排除自身 server | 防止 `xidl-codemode` 连接自己形成递归 |
 | D17 | 文档落盘，manifest 由插件生成到 internal，无磁盘缓存 | AI 可索引完整 schema；避免缓存失效和 secret 残留 |
 | D18 | xidlc 本地 path 开发，发布时 pin 版本 | 兼顾本地联调和 Nix/可复现构建 |
-| D19 | 每个 MCP 生成 `agents.md` 作为提示词注入载体 | 上游 instructions 和生成用法需要进入模型上下文 |
+| D19 | `agents.md` 只承载上游 MCP instructions | 上游提示词需要进入模型上下文；API 细节由 IDL 提供 |
 | D20 | `execute` 接收 stdio 内联代码 | 代码不落盘，避免 TOCTOU 和脚本生命周期 |
 | D21 | stdio-only；IDL/agents.md 落盘，execute 代码不落盘 | 文档可被 AI 索引；执行代码保持临时和可审计 |
-| D22 | tool 描述放 IDL `///`，但 `agents.md` 从同一 IR 渲染 | IDL 是可读契约；注入文档不能依赖重新解析 IDL |
+| D22 | tool 描述只放 IDL `///`，不在 `agents.md` 重复 | IDL 是唯一 API 契约；避免签名/描述双写 |
 | D23 | IDL 只生成，不支持手写 override；失败转 bug report | 避免生成物与手写契约双写；生成器问题必须被修 |
 | D24 | manifest 由 external xidl plugin 从 IDL 生成 | 运行时映射以 IDL 为输入，避免 codemode 内部再养一套 manifest emitter |
 
@@ -137,7 +137,7 @@ catalog -> agents.md + namespace IDL + bundle IDL
                             JS runtime mcp facade
 ```
 
-- `agents.md` 和 namespace IDL 落盘，供 AI 索引。
+- namespace IDL 落盘供 AI 索引；`agents.md` 仅在上游提供 instructions 时写入。
 - `bundle.idl` 是内部输入，交给 external xidl plugin。
 - 插件实现 xidlc `Codegen` 协议，读取 HIR 和 `@mcp_*` annotation，输出
   `manifest.json`。
@@ -192,7 +192,7 @@ catalog -> agents.md + namespace IDL + bundle IDL
 - `common` 是保留 namespace，用于跨 namespace 共享类型。
 - 每个 server 在内存中额外生成 `bundle.idl` 用于 xidlc 校验；
   per-namespace IDL 是它的视图。
-- `agents.md` 包含 namespace 索引、完整紧凑签名和用法。
+- `agents.md` 只包含上游 `initialize.instructions`；没有 instructions 时不写。
 - 生成物只读、原子写入；工作区不提交 git。
 
 **备选**
@@ -332,11 +332,10 @@ codemode MCP server 只注册一个工具：
 不提供 `list_apis`、`read_api`、MCP resources 或其他读取 API 的工具。
 输入 schema 不包含 `path`；JS 通过 stdio 内联传入，不落盘。
 
-发现信息有两条路径：
-
-1. codemode 的 `instructions` 注入工作区路径、server/namespace 索引和简短
-   签名。
-2. 模型用文件工具索引工作区里的 `agents.md` / `*.idl`。
+发现信息只有一条路径：codemode 的 `instructions` 说明 workspace 路径和
+`mcp.<server>.<tool>()` 调用约定；模型用文件工具 `rg` / `read` 工作区里的
+`*.idl` 获取参数名、顺序和类型。`agents.md` 只承载上游 instructions，
+不提供索引或签名。
 
 **备选**
 
@@ -347,12 +346,12 @@ codemode MCP server 只注册一个工具：
 
 - 用户明确要求只提供 `execute`，这是 code mode 的核心约束。
 - 单一工具避免下游 MCP context 被 N 个上游 tool 撑爆。
-- 工作区文件 + `agents.md` 已经能提供发现信息，不需要额外 MCP 工具。
+- IDL 文件 + 最小 instructions 已经能提供发现信息，不需要额外 MCP 工具。
 - 少两个工具就少两套参数校验、分页和权限逻辑。
 
 **代价**
 
-- 下游客户端需要能读工作区；否则只能依赖注入索引。
+- 下游客户端需要能读工作区；否则无法发现 API 细节。
 - 工作区是多实例并发写的风险点，需要原子写入和单实例假设。
 - 模型需要先读文档、再 execute，但代码本身不用落盘。
 
@@ -523,8 +522,8 @@ struct。第二版再对**嵌套 struct** 做公共字段识别：
 **代价**
 
 - 第一版 agent-browser IDL 较大。
-- 需要压缩描述、抽取公共字段，但**不能省 tool 签名**；否则 `agents.md`
-  索引用不起来，模型无法调用被省略的 API。
+- 需要压缩描述、抽取公共字段，但**不能省 IDL 里的参数签名**；否则模型无法
+  调用被省略的 API。
 
 ### D15：默认安全边界
 
@@ -577,7 +576,7 @@ struct。第二版再对**嵌套 struct** 做公共字段识别：
 **决策**
 
 - 每次启动重新连接上游、重新生成 `CatalogSnapshot`。
-- `agents.md`、namespace IDL 原子写入工作区，供 AI 索引。
+- namespace IDL 原子写入工作区；`agents.md` 仅在上游提供 instructions 时写。
 - manifest 由插件生成到 `.codemode/.internal`，读入内存；不作为 AI 文档。
 - 不做磁盘 cache；snapshot 带 `config_hash` / `tool_hash` 仅用于日志和
   诊断。
@@ -613,52 +612,43 @@ struct。第二版再对**嵌套 struct** 做公共字段识别：
 - 两套依赖来源需要 CI 同时覆盖。
 - 如果本地 xidl 有未发布改动，需要临时 patch 或 vendor。
 
-### D19：每个 MCP 生成 `agents.md` 作为提示词注入载体
+### D19：`agents.md` 只承载上游 MCP instructions
 
 **背景**
 
 上游 MCP `initialize` 可能返回 `instructions`。codemode 只暴露 `execute`，
-没有 `read_api`；文档需要落盘给 AI 索引，同时也要让模型知道工作区位置。
+没有 `read_api`。API 契约已经由 IDL 描述；但上游 instructions 是另一类
+内容，需要一个进入模型上下文的载体。
 
 **决策**
 
-每个 MCP server 在工作区生成 `{mcpname}/agents.md`，内容包括：
-
-- server 摘要和 namespace 索引；
-- **完整、紧凑的可调用签名**；
-- `mcp.<server>.<tool>()` 示例；
-- namespace IDL 文件路径；
-- 沙箱限制和返回结果形态。
-
-上游 `initialize.instructions` 默认**不注入**。它是不可信内容，可能包含
-prompt injection。需要时显式 `--inject-upstream-instructions`，并放在
-明确的“untrusted upstream documentation”区块。
-
-codemode 的 `instructions` 注入：
-
-- 工作区绝对路径；
-- server/namespace 索引；
-- 每个 tool 的短签名；
-- 提示模型用文件工具读取 `agents.md` / `*.idl` 获取完整描述。
+- 每个 MCP server 只有在提供 `initialize.instructions` 时才写
+  `{mcpname}/agents.md`；内容就是上游 instructions，不添加生成索引/签名。
+- codemode 的 `instructions` 只包含：
+  - 工作区绝对路径；
+  - IDL 路径约定 `.codemode/<server>/*.idl`；
+  - `mcp.<server>.<tool>(arg1, arg2, ...)` 和 `unwrap`；
+  - 上游 instructions，放在明确的 untrusted 区块并限长。
+- 参数名、顺序、类型、optional 只在 IDL；模型用 `rg` / `read` 获取。
 
 **备选**
 
 - 全部塞进 `execute` 的 tool description。
-- 完全不注入，只靠文件路径。
+- 生成完整 tool 索引/签名并注入（与 IDL 重复）。
 - 提供一个 `read_prompt` 工具（与“只提供 execute”冲突）。
 
 **理由**
 
-- 落盘文档可被 AI 索引，完整 schema 不占系统提示。
-- 注入索引让模型知道去哪里找细节。
-- 默认不注入上游 instructions，避免第三方 MCP server 控制系统提示。
+- IDL 是 API 的唯一契约；`agents.md` 不重复参数签名，避免漂移。
+- 上游 instructions 是 MCP 明确提供给客户端的上下文，放在独立载体里。
+- 文件工具可以 grep IDL；索引不是必需。
 - 不需要额外的 MCP 工具，符合单一 `execute` 约束。
 
 **代价**
 
-- 工作区所有权/并发写需要处理；默认每项目一个 `.codemode/`。
-- 文档可能过期，需要启动时重写。
-- 上游 instructions 被默认丢弃，用户可能觉得信息不足；需要 opt-in。
+- 客户端没有文件工具时，只能看到上游 instructions，无法发现 IDL 细节。
+- 上游 instructions 可能包含 prompt injection；必须标记、限长。
+- 每次启动重写工作区，`agents.md` 可能随上游变化。
 
 ### D20：`execute` 接收 stdio 内联代码
 
@@ -705,7 +695,7 @@ IDL 落盘方便 AI 索引。
 
 - codemode 对外只提供 stdio transport。
 - 上游 server 仍可配置为 stdio 或 streamable HTTP。
-- `agents.md` / namespace IDL 写工作区，供 AI 索引。
+- namespace IDL 写工作区；`agents.md` 只在上游提供 instructions 时写。
 - manifest 由 external plugin 从 IDL 生成到 `.codemode/.internal`，读入内存。
 - `execute` 的 JS 通过 stdio 传入，不落盘。
 
@@ -727,7 +717,7 @@ IDL 落盘方便 AI 索引。
 - 多实例/多项目共享工作区需要隔离；默认每项目 `.codemode/`。
 - 如果未来要支持远程，仍需设计代码上传方式；inline code 已经具备迁移基础。
 
-### D22：tool 描述放 IDL `///`，`agents.md` 从同一 IR 渲染
+### D22：tool 描述只放 IDL `///`，不在 `agents.md` 重复
 
 **背景**
 
@@ -745,7 +735,8 @@ MCP tool 的 `description`、参数说明和输出说明需要同时出现在：
   参数/字段描述、签名。
 - IDL emitter 把 `description` 渲染到 operation 前的 `///`，把字段描述渲染
   到 struct member 前的 `///`。
-- `agents.md` emitter 从同一份 `ToolDoc` IR 渲染完整紧凑签名和压缩描述。
+- `agents.md` 只写上游 `initialize.instructions`，不从 `ToolDoc` 渲染签名或
+  tool 描述。
 - 运行时派发只读 manifest，不解析 IDL。
 - IDL 必须通过 xidlc 校验；`///` 会作为 `@doc` annotation 保留。
 
@@ -765,35 +756,26 @@ interface GithubIssuesApi {
 };
 ```
 
-`agents.md` 中对应：
-
-```md
-## /github/issues.idl
-- `mcp.github.get_issue(owner: string, repo: string, issue_number: number)`
-  Get a single issue by owner/repo/number.
-```
-
 **备选**
 
-- 运行时解析 IDL 的 `///` 生成 `agents.md`。
+- 把签名和 tool 描述再渲染进 `agents.md`（与 IDL 重复）。
 - IDL 和 `agents.md` 各自维护描述。
 - 把完整 description 只放 `agents.md`，IDL 不写。
 
 **理由**
 
-- 一份 IR 同时渲染两份文档，避免漂移。
-- 人类可以在 IDL 里看到完整描述；模型在 `agents.md` 里看到签名和压缩描述。
+- 参数和描述只维护在 IDL，避免两份文档漂移。
+- `agents.md` 只承担上游 instructions，职责单一。
 - 不把 xidlc HIR 引入运行时派发路径。
 - xidl 的 `///` 本来就是正式文档模型，TypeScript target 也会输出 JSDoc
   （数据类型的字段；interface method 不输出，但 IDL 本身保留）。
 
 **代价**
 
-- 需要维护 `ToolDoc` IR 和两个 renderer。
-- 上游 description 是不可信文本，进入 `agents.md` 前要压缩、标记和限长。
-- `agents.md` 不能为了省空间丢掉签名；只能压缩 description。
+- 模型必须读/grep IDL 才能看到参数和描述。
+- 上游 description 只作为 IDL `///` 文档，不进 `agents.md`。
 - xidl TypeScript target 不生成 interface method 的 JSDoc，所以 tool 方法的
-  文档价值主要在 IDL 和 `agents.md`，不要指望 `.d.ts`。
+  文档价值主要在 IDL，不要指望 `.d.ts`。
 
 ### D23：IDL 只生成，不支持手写 override，失败转 bug report
 
@@ -948,9 +930,9 @@ xidlc gen --out-dir .codemode/.internal codemode-manifest \
 | --- | --- |
 | 用 TypeScript/Node 实现 | 部署需要 Node，xidlc 调用和沙箱边界更绕；不是不能做，但不是 MVP 最优 |
 | 把每个上游 tool 直接暴露成 MCP tool | context 爆炸，失去 code mode 的聚合价值 |
-| 额外提供 `list_apis` / `read_api` | 用户明确要求只提供 `execute`；发现信息走工作区文件和注入索引 |
+| 额外提供 `list_apis` / `read_api` | 用户明确要求只提供 `execute`；发现信息走工作区 IDL 和最小 instructions |
 | `execute` 只接受文件路径 | 用户明确要求 execute JS 走 stdio、不落盘；路径会引入 TOCTOU 和脚本生命周期 |
-| 只把文档注入 prompt、不落盘 | 用户要求落盘方便 AI 索引；完整 schema 不应该全塞进上下文 |
+| 只把 API 文档注入 prompt、不落盘 | 完整 schema 不应该全塞进上下文；IDL 落盘供 grep/read |
 | 支持手写 IDL override | 会形成第二份契约，与 manifest/生成器双写漂移；生成问题应提 bug |
 | codemode 内部再写 manifest emitter | 会和 IDL 生成器形成两套映射逻辑；manifest 应从 IDL 插件派生 |
 | 运行时临时 parser 解析 IDL | 与 xidlc HIR/annotation 语义漂移；应使用 external plugin |
@@ -966,7 +948,7 @@ xidlc gen --out-dir .codemode/.internal codemode-manifest \
 
 这些决策有明确的升级路径，但不应在第一版同时做：
 
-- `agents.md` 的索引/签名注入策略是否需要按客户端调整。
+- 上游 instructions 的注入上限和 trust 标记策略是否需要按客户端调整。
 - MCP 没有原生 namespace，`namespace_map` 的默认推导是否足够。
 - 多 codemode 实例共享同一项目 `.codemode/` 时是否需要 per-config 子目录。
 - `execute` 的 256 KiB 上限是否需要按 server/tool 调整。
