@@ -97,7 +97,7 @@ fn execute_tool() -> Tool {
         "properties": {
             "code": {
                 "type": "string",
-                "description": "JavaScript source. Use the injected global `mcp` object, e.g. `return unwrap(mcp.server.tool({ ... }));`"
+                "description": "JavaScript source. Use the injected global `mcp` object with positional arguments, e.g. `return unwrap(mcp.server.tool(arg1, arg2));`"
             },
             "timeout_ms": {
                 "type": "integer",
@@ -111,7 +111,7 @@ fn execute_tool() -> Tool {
     });
     Tool::new(
         "execute",
-        "Execute JavaScript in a QuickJS sandbox. MCP tools are injected as `mcp.<server>.<tool>(args)`.",
+        "Execute JavaScript in a QuickJS sandbox. MCP tools are injected as `mcp.<server>.<tool>(arg1, arg2, ...)`.",
         schema
             .as_object()
             .cloned()

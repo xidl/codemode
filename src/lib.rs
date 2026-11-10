@@ -158,7 +158,7 @@ fn build_instructions(workspace: &Path, docs: &[(String, String)], errors: &[Str
     out.push_str(&format!(
         "Code-mode gateway. Call `execute` with inline JavaScript.\n\
          Workspace: `{}`\n\n\
-         MCP APIs are injected as `mcp.<server>.<tool>(args)`. \
+         MCP APIs are injected as `mcp.<server>.<tool>(arg1, arg2, ...)`. \
          Use `unwrap(result)` to get `structuredContent` or `content`.\n\n",
         workspace.display()
     ));

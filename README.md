@@ -36,6 +36,9 @@ upstream MCP servers --tools/list--> catalog
 MCP client --execute(code)--> QuickJS --mcp.<server>.<tool>--> upstream MCP
 ```
 
+The current behavior and the reasoning behind it are documented in
+[`docs/design.md`](docs/design.md).
+
 ## Workspace
 
 By default the gateway writes:
@@ -138,9 +141,11 @@ xidl-codemode bug-report --config ~/.config/mcp/mcp.json
   memory, 100 tool calls, 1 MiB result, and bounded console logs.
 - Upstream child processes get a cleared environment plus `PATH`, `HOME`, and
   explicitly configured variables.
-- `initialize.instructions` from upstream servers is not injected by default.
-- The gateway never prints secrets from MCP config; only health/status text is
-  logged.
+- `initialize.instructions` from upstream servers is written to `agents.md`
+  and injected into the gateway instructions as untrusted, length-capped text.
+- Config env/header values are not written to generated files. Logs and error
+  strings are not systematically redacted yet, so avoid putting secrets in
+  commands or URLs that may appear in error output.
 
 ## Development
 
@@ -151,18 +156,15 @@ cargo test --all-targets
 cargo clippy --all-targets -- -D warnings
 ```
 
+The design document describes the behavior that is actually implemented; early
+ideas that are not implemented are listed at the end of it.
+
 The external manifest plugin is a second binary in this package:
 
 ```bash
 cargo build --bins
 xidlc gen --out-dir /tmp/out codemode-manifest .codemode/.internal/codegraph.bundle.idl
 ```
-
-## Benchmarks
-
-See [`bench/DESIGN.md`](bench/DESIGN.md) and
-[`bench/RESULTS.md`](bench/RESULTS.md) for the code-mode vs direct-MCP
-experiment (token usage, turns, correctness) using WorkBuddy DeepSeek.
 
 ## License
 

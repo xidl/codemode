@@ -1,5 +1,10 @@
 # xidl-codemode 实施计划
 
+> **状态（2026-11）**：M0–M4 的主体已经实现。本文保留为最初实施计划和
+> 后续路线；当前实际行为以 [`README.md`](README.md) 和
+> [`docs/design.md`](docs/design.md) 为准。文中出现的 secret redaction、
+> allow/deny、lazy retry、`namespace_map` 配置等尚未实现。
+
 ## 结论
 
 做成一个 Rust 单二进制 MCP server：
