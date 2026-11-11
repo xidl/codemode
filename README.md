@@ -29,7 +29,7 @@ upstream MCP servers --tools/list--> catalog
    |                                   +--> external xidlc plugin
    |                                             |
    |                                             v
-   |                                        manifest.json
+   |                                   glue.js + glue.d.ts
    |                                             |
    +---------------------------------------------+
                                                  v
@@ -41,24 +41,34 @@ The current behavior and the reasoning behind it are documented in
 
 ## Workspace
 
-By default the gateway writes:
+By default the gateway writes generated docs into a temporary run directory
+that is removed when the process exits:
 
 ```text
 .codemode/
-  github/
-    agents.md
-    issues.idl
-  codegraph/
-    agents.md
-    default.idl
-  .internal/
-    github.bundle.idl
+  .cache/
+    <run-id>/
+      github/
+        agents.md
+        issues.idl
+      codegraph/
+        agents.md
+        default.idl
+      .internal/
+        github.bundle.idl
 ```
 
+The run id contains a random component; a fresh directory is created per `serve`
+start and stale runs are cleared on the next start. Clients whose file tools
+cannot read the run directory can pass `--docs-dir <path>` to keep generated
+docs in a persistent directory; persistent mode refreshes every start and
+removes namespace files that were not generated this run.
+
 `*.idl` is generated and must not be edited; there is no hand-written override
-path. If a generated IDL is invalid, treat it as a bug and use
-`xidl-codemode bug-report`. `agents.md` exists only when the upstream MCP server
-provides `initialize.instructions`; it is not a generated tool/signature index.
+path. If a generated IDL is invalid, treat it as a bug: run
+`xidl-codemode doctor --config <config>` and report the failing schema
+manually. `agents.md` exists only when the upstream MCP server provides
+`initialize.instructions`; it is not a generated tool/signature index.
 
 The model discovers APIs from the filesystem. The codemode `instructions` only
 state the workspace convention and call shape:
@@ -70,9 +80,13 @@ rg "@mcp_tool|string owner|int64 issue_number" .codemode/github/*.idl
 
 Parameter names, order, types, and optionality live only in the IDL files.
 
-The runtime manifest is produced by the external xidl plugin
-`xidl-codemode-manifest` from the bundle IDL. `xidlc` discovers it through
-`PATH` using the `xidl-<lang>` convention (`codemode-manifest`).
+The QuickJS glue is produced by the external xidl plugin `xidl-codemode-glue`
+from the bundle IDL. `xidlc` discovers it through `PATH` using the
+`xidl-<lang>` convention (`codemode-glue`). The glue is installed into each
+execute sandbox through a single injected `host.callTool` capability; the host
+object itself is never exposed to user code. After generation, the glue is
+installed in a probe sandbox and audited against the tool catalog before the
+server is registered.
 
 ## Install
 
@@ -80,7 +94,7 @@ Download both binaries from a GitHub release and put them in the same directory:
 
 ```text
 xidl-codemode
-xidl-codemode-manifest
+xidl-codemode-glue
 ```
 
 Or build locally:
@@ -129,16 +143,22 @@ the upstream MCP input-schema property order.
 
 ```bash
 xidl-codemode serve     --config ~/.config/mcp/mcp.json
-xidl-codemode generate  --config ~/.config/mcp/mcp.json
+xidl-codemode generate  --config ~/.config/mcp/mcp.json --docs-dir /path/to/docs
 xidl-codemode doctor    --config ~/.config/mcp/mcp.json
-xidl-codemode bug-report --config ~/.config/mcp/mcp.json
 ```
+
+`doctor` is read-only: it connects to the configured servers, generates and
+audits the glue in memory, and prints a health report without writing any
+workspace files.
 
 ## Limits and security
 
 - QuickJS has no filesystem, network, subprocess, or environment access.
-- `execute.code` is limited to 256 KiB, 10s by default (60s max), 128 MiB
-  memory, 100 tool calls, 1 MiB result, and bounded console logs.
+- `execute.code` is limited to 256 KiB, 10s default timeout (soft limit; the
+  configured `executeTimeoutHardMs` hard limit defaults to 60s), 128 MiB
+  memory, 100 tool calls, 1 MiB result, and bounded console logs. Each
+  upstream tool call has its own 10s timeout (`tool_timeout`) that cannot
+  exceed the remaining execute deadline.
 - Upstream child processes get a cleared environment plus `PATH`, `HOME`, and
   explicitly configured variables.
 - `initialize.instructions` from upstream servers is written to `agents.md`
@@ -159,11 +179,11 @@ cargo clippy --all-targets -- -D warnings
 The design document describes the behavior that is actually implemented; early
 ideas that are not implemented are listed at the end of it.
 
-The external manifest plugin is a second binary in this package:
+The external glue plugin is a second binary in this package:
 
 ```bash
 cargo build --bins
-xidlc gen --out-dir /tmp/out codemode-manifest .codemode/.internal/codegraph.bundle.idl
+xidlc gen --out-dir /tmp/out codemode-glue .codemode/.internal/codegraph.bundle.idl
 ```
 
 ## License

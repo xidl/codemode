@@ -5,7 +5,7 @@ use clap::{Parser, Subcommand};
 use rmcp::ServiceExt;
 use tracing_subscriber::EnvFilter;
 use xidl_codemode::server::CodemodeServer;
-use xidl_codemode::{build, default_workspace, BuildOptions};
+use xidl_codemode::{build, default_workspace, diagnose, BuildOptions, DiagnoseOptions};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -26,27 +26,27 @@ enum Command {
         config: Option<PathBuf>,
         #[arg(long)]
         workspace: Option<PathBuf>,
+        /// Persistent docs directory. By default docs live in a temporary
+        /// `<workspace>/.cache/<run-id>/` directory that is removed on exit.
+        #[arg(long)]
+        docs_dir: Option<PathBuf>,
     },
-    /// Generate workspace docs and manifests, then exit.
+    /// Export persistent workspace docs, then exit.
     Generate {
         #[arg(long)]
         config: Option<PathBuf>,
         #[arg(long)]
         workspace: Option<PathBuf>,
+        #[arg(long)]
+        docs_dir: PathBuf,
     },
-    /// Discover servers/tools and print a health report.
+    /// Discover servers/tools and print a read-only health report.
     Doctor {
         #[arg(long)]
         config: Option<PathBuf>,
+        /// Print the health report as JSON.
         #[arg(long)]
-        workspace: Option<PathBuf>,
-    },
-    /// Print a markdown bug report for the current configuration.
-    BugReport {
-        #[arg(long)]
-        config: Option<PathBuf>,
-        #[arg(long)]
-        workspace: Option<PathBuf>,
+        json: bool,
     },
 }
 
@@ -59,21 +59,38 @@ async fn main() -> Result<()> {
         .init();
     let cli = Cli::parse();
     match cli.command {
-        Command::Serve { config, workspace } => {
-            let app = build(&options(config, workspace))?;
+        Command::Serve {
+            config,
+            workspace,
+            docs_dir,
+        } => {
+            let app = build(&BuildOptions {
+                config,
+                workspace: workspace.unwrap_or_else(default_workspace),
+                docs_dir,
+            })?;
             for summary in &app.summaries {
                 match &summary.error {
                     Some(error) => tracing::warn!("{error}"),
                     None => tracing::info!("{}: {} tools", summary.name, summary.tools),
                 }
             }
+            tracing::info!("docs directory: {}", app.docs_dir.display());
             let server = CodemodeServer::new(app.state);
             let running = server.serve(rmcp::transport::stdio()).await?;
             running.waiting().await?;
         }
-        Command::Generate { config, workspace } => {
-            let app = build(&options(config, workspace))?;
-            println!("workspace: {}", app.workspace.display());
+        Command::Generate {
+            config,
+            workspace,
+            docs_dir,
+        } => {
+            let app = build(&BuildOptions {
+                config,
+                workspace: workspace.unwrap_or_else(default_workspace),
+                docs_dir: Some(docs_dir),
+            })?;
+            println!("docs directory: {}", app.docs_dir.display());
             for summary in &app.summaries {
                 match &summary.error {
                     Some(error) => println!("{}: error: {error}", summary.name),
@@ -81,47 +98,29 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Command::Doctor { config, workspace } => {
-            let app = build(&options(config, workspace))?;
-            println!("workspace: {}", app.workspace.display());
-            for summary in &app.summaries {
+        Command::Doctor { config, json } => {
+            let summaries = diagnose(&DiagnoseOptions { config })?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&summaries).expect("summaries serialize as JSON")
+                );
+                return Ok(());
+            }
+            for summary in &summaries {
                 match &summary.error {
                     Some(error) => println!("{}: ERROR: {error}", summary.name),
                     None => println!("{}: ok, {} tools", summary.name, summary.tools),
                 }
             }
-            if !app.state.errors.is_empty() {
-                println!("\n{} server(s) failed", app.state.errors.len());
+            let failed = summaries
+                .iter()
+                .filter(|summary| summary.error.is_some())
+                .count();
+            if failed > 0 {
+                println!("\n{failed} server(s) failed");
             }
-        }
-        Command::BugReport { config, workspace } => {
-            let app = build(&options(config, workspace))?;
-            println!("# xidl-codemode bug report\n");
-            println!("- xidl-codemode: {}", env!("CARGO_PKG_VERSION"));
-            println!("- workspace: `{}`", app.workspace.display());
-            println!("- servers: {}\n", app.summaries.len());
-            println!("## Errors\n");
-            if app.state.errors.is_empty() {
-                println!("No discovery or manifest errors.");
-            } else {
-                for error in &app.state.errors {
-                    println!("- `{error}`");
-                }
-            }
-            println!("\n## Reproduction\n");
-            println!("```bash");
-            println!("xidl-codemode doctor --config <config>");
-            println!("xidl-codemode generate --config <config>");
-            println!("xidlc gen --out-dir /tmp/out codemode-manifest <bundle.idl>");
-            println!("```");
         }
     }
     Ok(())
-}
-
-fn options(config: Option<PathBuf>, workspace: Option<PathBuf>) -> BuildOptions {
-    BuildOptions {
-        config,
-        workspace: workspace.unwrap_or_else(default_workspace),
-    }
 }

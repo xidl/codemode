@@ -9,6 +9,12 @@ use crate::error::{Error, Result};
 struct ConfigFile {
     #[serde(rename = "mcpServers", alias = "servers", default)]
     servers: BTreeMap<String, RawServer>,
+    #[serde(
+        rename = "executeTimeoutHardMs",
+        alias = "execute_timeout_hard_ms",
+        default
+    )]
+    execute_timeout_hard_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -48,6 +54,14 @@ pub struct ServerSpec {
     pub transport: Transport,
 }
 
+#[derive(Debug, Clone)]
+pub struct LoadedConfig {
+    pub servers: Vec<ServerSpec>,
+    pub execute_timeout_hard_ms: u64,
+}
+
+const DEFAULT_EXECUTE_TIMEOUT_HARD_MS: u64 = 60_000;
+
 pub fn default_config_path() -> Option<PathBuf> {
     let config_home = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
@@ -62,7 +76,7 @@ pub fn default_config_path() -> Option<PathBuf> {
     None
 }
 
-pub fn load(path: Option<&Path>) -> Result<Vec<ServerSpec>> {
+pub fn load(path: Option<&Path>) -> Result<LoadedConfig> {
     let path = match path {
         Some(path) => path.to_path_buf(),
         None => default_config_path()
@@ -95,7 +109,13 @@ pub fn load(path: Option<&Path>) -> Result<Vec<ServerSpec>> {
     if servers.is_empty() {
         return Err(Error::Config("no enabled MCP servers in config".into()));
     }
-    Ok(servers)
+    Ok(LoadedConfig {
+        servers,
+        execute_timeout_hard_ms: config
+            .execute_timeout_hard_ms
+            .unwrap_or(DEFAULT_EXECUTE_TIMEOUT_HARD_MS)
+            .max(100),
+    })
 }
 
 fn parse_config(path: &Path, raw: &str) -> Result<ConfigFile> {

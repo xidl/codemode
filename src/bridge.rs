@@ -13,6 +13,7 @@ use serde_json::Value;
 use crate::catalog::{sanitize_ident, ServerCatalog, ToolInfo};
 use crate::config::{ServerSpec, Transport};
 use crate::error::{Error, Result};
+use crate::sandbox::{ToolCallFailure, ToolCallFailureKind};
 
 pub struct UpstreamManager {
     tx: Option<SyncSender<BridgeRequest>>,
@@ -29,7 +30,7 @@ enum BridgeRequest {
         tool: String,
         arguments: Value,
         timeout: Duration,
-        reply: SyncSender<std::result::Result<Value, String>>,
+        reply: SyncSender<std::result::Result<Value, ToolCallFailure>>,
     },
 }
 
@@ -68,11 +69,14 @@ impl UpstreamManager {
         tool: &str,
         arguments: Value,
         timeout: Duration,
-    ) -> Result<Value> {
+    ) -> std::result::Result<Value, ToolCallFailure> {
         let (reply_tx, reply_rx) = mpsc::sync_channel(1);
         self.tx
             .as_ref()
-            .ok_or_else(|| Error::Upstream("bridge is shut down".into()))?
+            .ok_or_else(|| ToolCallFailure {
+                kind: ToolCallFailureKind::Failed,
+                message: "bridge is shut down".into(),
+            })?
             .send(BridgeRequest::Call {
                 server: server.to_string(),
                 tool: tool.to_string(),
@@ -80,11 +84,16 @@ impl UpstreamManager {
                 timeout,
                 reply: reply_tx,
             })
-            .map_err(|_| Error::Upstream("bridge thread stopped".into()))?;
+            .map_err(|_| ToolCallFailure {
+                kind: ToolCallFailureKind::Failed,
+                message: "bridge thread stopped".into(),
+            })?;
         reply_rx
-            .recv_timeout(timeout + Duration::from_secs(2))
-            .map_err(|err| Error::Upstream(format!("tool call reply timeout: {err}")))?
-            .map_err(Error::Upstream)
+            .recv_timeout(timeout)
+            .map_err(|err| ToolCallFailure {
+                kind: ToolCallFailureKind::ToolTimeout,
+                message: format!("tool call reply timeout: {err}"),
+            })?
     }
 }
 
@@ -127,16 +136,27 @@ fn bridge_thread(rx: Receiver<BridgeRequest>) {
                 reply,
             } => {
                 let result = runtime.block_on(async {
-                    let client = clients
-                        .get(&server)
-                        .ok_or_else(|| format!("server {server} is not connected"))?;
+                    let client = clients.get(&server).ok_or_else(|| ToolCallFailure {
+                        kind: ToolCallFailureKind::Failed,
+                        message: format!("server {server} is not connected"),
+                    })?;
                     let arguments = arguments.as_object().cloned().unwrap_or_default();
                     let params = CallToolRequestParams::new(tool).with_arguments(arguments);
                     match tokio::time::timeout(timeout, client.peer().call_tool(params)).await {
-                        Ok(Ok(result)) => Ok(serde_json::to_value(result)
-                            .map_err(|err| format!("serialize tool result: {err}"))?),
-                        Ok(Err(err)) => Err(err.to_string()),
-                        Err(_) => Err("tool call timed out".to_string()),
+                        Ok(Ok(result)) => {
+                            Ok(serde_json::to_value(result).map_err(|err| ToolCallFailure {
+                                kind: ToolCallFailureKind::Failed,
+                                message: format!("serialize tool result: {err}"),
+                            })?)
+                        }
+                        Ok(Err(err)) => Err(ToolCallFailure {
+                            kind: ToolCallFailureKind::Failed,
+                            message: err.to_string(),
+                        }),
+                        Err(_) => Err(ToolCallFailure {
+                            kind: ToolCallFailureKind::ToolTimeout,
+                            message: "tool call timed out".to_string(),
+                        }),
                     }
                 });
                 let _ = reply.send(result);
@@ -276,7 +296,7 @@ impl crate::sandbox::ToolCaller for UpstreamManager {
         tool: &str,
         arguments: Value,
         timeout: Duration,
-    ) -> Result<Value> {
+    ) -> std::result::Result<Value, ToolCallFailure> {
         self.call(server, tool, arguments, timeout)
     }
 }

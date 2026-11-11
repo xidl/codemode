@@ -1,11 +1,11 @@
-use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde_json::{json, Value};
 use xidl_codemode::bridge::UpstreamManager;
-use xidl_codemode::manifest_types::{Manifest, ManifestNamespace, ManifestParam, ManifestTool};
-use xidl_codemode::sandbox::{self, RuntimeServer, ToolCaller};
+use xidl_codemode::sandbox::{
+    self, RuntimeServer, ToolCallFailure, ToolCallFailureKind, ToolCaller,
+};
 
 fn bridge() -> Arc<dyn ToolCaller> {
     Arc::new(UpstreamManager::start().unwrap())
@@ -14,6 +14,20 @@ fn bridge() -> Arc<dyn ToolCaller> {
 #[derive(Default)]
 struct FakeCaller {
     calls: Mutex<Vec<(String, String, Value)>>,
+    failure: Option<ToolCallFailureKind>,
+}
+
+impl FakeCaller {
+    fn ok() -> Arc<FakeCaller> {
+        Arc::new(FakeCaller::default())
+    }
+
+    fn failing(kind: ToolCallFailureKind) -> Arc<FakeCaller> {
+        Arc::new(FakeCaller {
+            calls: Mutex::new(Vec::new()),
+            failure: Some(kind),
+        })
+    }
 }
 
 impl ToolCaller for FakeCaller {
@@ -23,11 +37,17 @@ impl ToolCaller for FakeCaller {
         tool: &str,
         arguments: Value,
         _timeout: Duration,
-    ) -> xidl_codemode::error::Result<Value> {
+    ) -> Result<Value, ToolCallFailure> {
         self.calls
             .lock()
             .expect("fake caller mutex poisoned")
             .push((server.to_string(), tool.to_string(), arguments));
+        if let Some(kind) = self.failure {
+            return Err(ToolCallFailure {
+                kind,
+                message: "fake failure".into(),
+            });
+        }
         Ok(json!({
             "content": [{ "type": "text", "text": "ok" }],
             "isError": false
@@ -35,42 +55,32 @@ impl ToolCaller for FakeCaller {
     }
 }
 
+const FAKE_GLUE: &str = r#"
+function installXidlGlue(target, host) {
+  const __ns = Object.create(null);
+  __ns["echo"] = function(...args) {
+    if (args.length > 3) { throw new Error("too many arguments for fake.echo (expected 3)"); }
+    const __params = Object.create(null);
+    if (args.length > 0 && args[0] !== undefined) { __params["first_wire"] = args[0]; } else { throw new Error("missing required argument first for fake.echo"); }
+    if (args.length > 1 && args[1] !== undefined) { __params["second_wire"] = args[1]; }
+    if (args.length > 2 && args[2] !== undefined) { __params["__proto__"] = args[2]; }
+    return JSON.parse(host.callTool(JSON.stringify({ server: "fake", tool: "echo", params: __params })));
+  };
+  Object.freeze(__ns);
+  const __server = Object.create(null);
+  __server["fake"] = __ns;
+  Object.freeze(__server);
+  for (const [key, value] of Object.entries(__server)) {
+    Object.defineProperty(target, key, { value: value, enumerable: true });
+  }
+}
+"#;
+
 fn fake_server() -> RuntimeServer {
     RuntimeServer {
         name: "fake".into(),
         js_name: "fake".into(),
-        manifest: Manifest {
-            version: 1,
-            server: "fake".into(),
-            namespaces: BTreeMap::from([(
-                "default".into(),
-                ManifestNamespace {
-                    idl: "/fake/default.idl".into(),
-                    interface: "FakeDefaultApi".into(),
-                    tools: vec![ManifestTool {
-                        js: "echo".into(),
-                        mcp: "echo".into(),
-                        output: "McpToolResult".into(),
-                        params: vec![
-                            ManifestParam {
-                                name: "first".into(),
-                                wire: "first_wire".into(),
-                                required: true,
-                            },
-                            ManifestParam {
-                                name: "second".into(),
-                                wire: "second_wire".into(),
-                                required: false,
-                            },
-                        ],
-                        read_only: true,
-                        destructive: false,
-                        idempotent: false,
-                        open_world: false,
-                    }],
-                },
-            )]),
-        },
+        glue: FAKE_GLUE.into(),
     }
 }
 
@@ -84,11 +94,12 @@ fn executes_plain_javascript() {
     );
     assert!(outcome.ok, "{:?}", outcome.error);
     assert_eq!(outcome.value, serde_json::json!(42));
+    assert_eq!(outcome.timeout_ms, 5000);
 }
 
 #[test]
 fn positional_arguments_map_to_wire_object() {
-    let fake = Arc::new(FakeCaller::default());
+    let fake = FakeCaller::ok();
     let caller: Arc<dyn ToolCaller> = fake.clone();
     let outcome = sandbox::execute(
         &caller,
@@ -109,7 +120,7 @@ fn positional_arguments_map_to_wire_object() {
 
 #[test]
 fn optional_positional_argument_can_be_omitted() {
-    let fake = Arc::new(FakeCaller::default());
+    let fake = FakeCaller::ok();
     let caller: Arc<dyn ToolCaller> = fake.clone();
     let outcome = sandbox::execute(
         &caller,
@@ -125,7 +136,7 @@ fn optional_positional_argument_can_be_omitted() {
 
 #[test]
 fn missing_required_positional_argument_fails() {
-    let fake = Arc::new(FakeCaller::default());
+    let fake = FakeCaller::ok();
     let caller: Arc<dyn ToolCaller> = fake.clone();
     let outcome = sandbox::execute(
         &caller,
@@ -149,12 +160,12 @@ fn missing_required_positional_argument_fails() {
 
 #[test]
 fn extra_positional_argument_fails() {
-    let fake = Arc::new(FakeCaller::default());
+    let fake = FakeCaller::ok();
     let caller: Arc<dyn ToolCaller> = fake.clone();
     let outcome = sandbox::execute(
         &caller,
         &[fake_server()],
-        "return mcp.fake.echo('a', 1, 2);",
+        "return mcp.fake.echo('a', 1, 2, 3);",
         Duration::from_secs(5),
     );
     assert!(!outcome.ok);
@@ -166,6 +177,102 @@ fn extra_positional_argument_fails() {
         .lock()
         .expect("fake caller mutex poisoned")
         .is_empty());
+}
+
+#[test]
+fn hides_host_internals_from_user_code() {
+    let outcome = sandbox::execute(
+        &bridge(),
+        &[fake_server()],
+        "return [typeof __xidl_call, typeof __xidl_manifest, typeof __xidl_log, typeof host, typeof __xidl_log_fn, typeof __console].join(',');",
+        Duration::from_secs(5),
+    );
+    assert!(outcome.ok, "{:?}", outcome.error);
+    assert_eq!(
+        outcome.value,
+        serde_json::json!("undefined,undefined,undefined,undefined,undefined,undefined")
+    );
+}
+
+#[test]
+fn mcp_object_is_frozen() {
+    let outcome = sandbox::execute(
+        &bridge(),
+        &[fake_server()],
+        "return Object.isFrozen(mcp) ? 'frozen' : 'mutable';",
+        Duration::from_secs(5),
+    );
+    assert!(outcome.ok, "{:?}", outcome.error);
+    assert_eq!(outcome.value, serde_json::json!("frozen"));
+}
+
+#[test]
+fn proto_wire_name_survives_serialization() {
+    let fake = FakeCaller::ok();
+    let caller: Arc<dyn ToolCaller> = fake.clone();
+    let outcome = sandbox::execute(
+        &caller,
+        &[fake_server()],
+        "return mcp.fake.echo('a', 1, 'p');",
+        Duration::from_secs(5),
+    );
+    assert!(outcome.ok, "{:?}", outcome.error);
+    let calls = fake.calls.lock().expect("fake caller mutex poisoned");
+    assert_eq!(
+        calls[0].2,
+        json!({ "first_wire": "a", "second_wire": 1, "__proto__": "p" })
+    );
+}
+
+#[test]
+fn tool_timeout_is_reported_as_tool_timeout() {
+    let fake = FakeCaller::failing(ToolCallFailureKind::ToolTimeout);
+    let caller: Arc<dyn ToolCaller> = fake.clone();
+    let outcome = sandbox::execute(
+        &caller,
+        &[fake_server()],
+        "return mcp.fake.echo('hello');",
+        Duration::from_secs(5),
+    );
+    assert!(!outcome.ok);
+    let error = outcome.error.unwrap();
+    assert_eq!(error.code, "tool_timeout");
+    assert!(error.message.contains("fake failure"));
+    let traces = &outcome.tool_calls;
+    assert_eq!(traces.len(), 1);
+    assert!(!traces[0].ok);
+}
+
+#[test]
+fn caught_tool_timeout_does_not_contaminate_later_errors() {
+    let fake = FakeCaller::failing(ToolCallFailureKind::ToolTimeout);
+    let caller: Arc<dyn ToolCaller> = fake.clone();
+    let outcome = sandbox::execute(
+        &caller,
+        &[fake_server()],
+        "try { mcp.fake.echo('hello'); } catch (e) { throw new Error('different failure'); }",
+        Duration::from_secs(5),
+    );
+    assert!(!outcome.ok);
+    let error = outcome.error.unwrap();
+    assert_eq!(error.code, "js_error");
+    assert!(error.message.contains("different failure"));
+}
+
+#[test]
+fn failed_tool_call_is_reported_as_js_error() {
+    let fake = FakeCaller::failing(ToolCallFailureKind::Failed);
+    let caller: Arc<dyn ToolCaller> = fake.clone();
+    let outcome = sandbox::execute(
+        &caller,
+        &[fake_server()],
+        "return mcp.fake.echo('hello');",
+        Duration::from_secs(5),
+    );
+    assert!(!outcome.ok);
+    let error = outcome.error.unwrap();
+    assert_eq!(error.code, "js_error");
+    assert!(error.message.contains("fake failure"));
 }
 
 #[test]
@@ -181,7 +288,7 @@ fn interrupts_infinite_loop() {
         Some("started")
     );
     assert!(!outcome.ok);
-    assert_eq!(outcome.error.as_ref().unwrap().code, "timeout");
+    assert_eq!(outcome.error.as_ref().unwrap().code, "execute_timeout");
 }
 
 #[test]

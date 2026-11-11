@@ -14,8 +14,8 @@ name = "xidl-codemode"
 path = "src/main.rs"
 
 [[bin]]
-name = "xidl-codemode-manifest"
-path = "src/bin/xidl-codemode-manifest.rs"
+name = "xidl-codemode-glue"
+path = "src/bin/xidl-codemode-glue.rs"
 
 [dependencies]
 anyhow = "1"
@@ -37,6 +37,7 @@ schemars = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "0.10"
+tempfile = "3"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 toml = "0.9"
@@ -44,9 +45,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 xidlc = { version = "0.111", default-features = false }
 xidl-parser = "0.111"
-
-[dev-dependencies]
-tempfile = "3"
 
 [profile.release]
 lto = "thin"

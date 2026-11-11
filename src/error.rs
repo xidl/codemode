@@ -8,8 +8,8 @@ pub enum Error {
     Upstream(String),
     #[error("idl error: {0}")]
     Idl(String),
-    #[error("manifest error: {0}")]
-    Manifest(String),
+    #[error("glue error: {0}")]
+    Glue(String),
     #[error("workspace error: {0}")]
     Workspace(String),
     #[error("io error: {0}")]

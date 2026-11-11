@@ -1,12 +1,60 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+
+use tempfile::TempDir;
 
 use crate::error::{Error, Result};
 use crate::idl::GeneratedServer;
+
+pub struct DocsDir {
+    pub path: PathBuf,
+    pub guard: Option<TempDir>,
+}
+
+pub struct KeptServer {
+    pub name: String,
+    pub idl_files: Vec<String>,
+    pub agents_md: bool,
+}
 
 pub fn default_root() -> PathBuf {
     std::env::current_dir()
         .unwrap_or_else(|_| PathBuf::from("."))
         .join(".codemode")
+}
+
+pub fn prepare(workspace_root: &Path, docs_dir: Option<&Path>) -> Result<DocsDir> {
+    match docs_dir {
+        Some(dir) => {
+            std::fs::create_dir_all(dir)
+                .map_err(|err| Error::Workspace(format!("create {}: {err}", dir.display())))?;
+            let path = dir
+                .canonicalize()
+                .map_err(|err| Error::Workspace(format!("resolve {}: {err}", dir.display())))?;
+            Ok(DocsDir { path, guard: None })
+        }
+        None => {
+            let cache = workspace_root.join(".cache");
+            if cache.exists() {
+                let _ = std::fs::remove_dir_all(&cache);
+            }
+            std::fs::create_dir_all(&cache)
+                .map_err(|err| Error::Workspace(format!("create {}: {err}", cache.display())))?;
+            let temp = tempfile::Builder::new()
+                .prefix("run-")
+                .tempdir_in(&cache)
+                .map_err(|err| {
+                    Error::Workspace(format!("create run dir in {}: {err}", cache.display()))
+                })?;
+            let path = temp.path().canonicalize().map_err(|err| {
+                Error::Workspace(format!("resolve {}: {err}", temp.path().display()))
+            })?;
+            Ok(DocsDir {
+                path,
+                guard: Some(temp),
+            })
+        }
+    }
 }
 
 pub fn write_server(root: &Path, generated: &GeneratedServer) -> Result<PathBuf> {
@@ -33,6 +81,52 @@ pub fn write_server(root: &Path, generated: &GeneratedServer) -> Result<PathBuf>
         &generated.bundle,
     )?;
     Ok(server_dir)
+}
+
+pub fn cleanup_stale(root: &Path, kept: &[KeptServer]) -> Result<()> {
+    for server in kept {
+        let dir = root.join(&server.name);
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+        let idl_files: HashSet<&str> = server.idl_files.iter().map(String::as_str).collect();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if name.ends_with(".idl") && !idl_files.contains(name) {
+                let _ = std::fs::remove_file(&path);
+            }
+            if name == "agents.md" && !server.agents_md {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
+    let internal = root.join(".internal");
+    if let Ok(entries) = std::fs::read_dir(&internal) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if name.ends_with(".bundle.idl") {
+                let current = format!("{}.bundle.idl", server_name_from_bundle(name));
+                if !kept
+                    .iter()
+                    .any(|server| format!("{}.bundle.idl", server.name) == current)
+                {
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn server_name_from_bundle(name: &str) -> &str {
+    name.strip_suffix(".bundle.idl").unwrap_or(name)
 }
 
 fn write_atomic(path: &Path, content: &str) -> Result<()> {

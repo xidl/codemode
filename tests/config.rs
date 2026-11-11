@@ -18,9 +18,13 @@ fn parses_json_config_and_infers_stdio() {
         }"#,
     )
     .unwrap();
-    let servers = config::load(Some(&path)).unwrap();
-    assert_eq!(servers.len(), 2);
-    let demo = servers.iter().find(|server| server.name == "demo").unwrap();
+    let loaded = config::load(Some(&path)).unwrap();
+    assert_eq!(loaded.servers.len(), 2);
+    let demo = loaded
+        .servers
+        .iter()
+        .find(|server| server.name == "demo")
+        .unwrap();
     match &demo.transport {
         Transport::Stdio {
             command,
@@ -35,7 +39,8 @@ fn parses_json_config_and_infers_stdio() {
         }
         other => panic!("expected stdio transport, got {other:?}"),
     }
-    let remote = servers
+    let remote = loaded
+        .servers
         .iter()
         .find(|server| server.name == "remote")
         .unwrap();
@@ -64,9 +69,9 @@ DEMO = "1"
 "#,
     )
     .unwrap();
-    let servers = config::load(Some(&path)).unwrap();
-    assert_eq!(servers.len(), 1);
-    match &servers[0].transport {
+    let loaded = config::load(Some(&path)).unwrap();
+    assert_eq!(loaded.servers.len(), 1);
+    match &loaded.servers[0].transport {
         Transport::Stdio {
             command, args, env, ..
         } => {
@@ -152,9 +157,40 @@ fn ignores_self_entry() {
         r#"{"mcpServers":{"xidl-codemode":{"command":"x"},"demo":{"command":"demo-server"}}}"#,
     )
     .unwrap();
-    let servers = config::load(Some(&path)).unwrap();
-    assert_eq!(servers.len(), 1);
-    assert_eq!(servers[0].name, "demo");
+    let loaded = config::load(Some(&path)).unwrap();
+    assert_eq!(loaded.servers.len(), 1);
+    assert_eq!(loaded.servers[0].name, "demo");
+}
+
+#[test]
+fn parses_execute_timeout_hard_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("mcp.json");
+    std::fs::write(
+        &path,
+        r#"{"mcpServers":{"demo":{"command":"demo-server"}},"executeTimeoutHardMs":30000}"#,
+    )
+    .unwrap();
+    let loaded = config::load(Some(&path)).unwrap();
+    assert_eq!(loaded.execute_timeout_hard_ms, 30000);
+
+    let path = dir.path().join("snake.json");
+    std::fs::write(
+        &path,
+        r#"{"mcpServers":{"demo":{"command":"demo-server"}},"execute_timeout_hard_ms":45000}"#,
+    )
+    .unwrap();
+    let loaded = config::load(Some(&path)).unwrap();
+    assert_eq!(loaded.execute_timeout_hard_ms, 45000);
+
+    let path = dir.path().join("default.json");
+    std::fs::write(
+        &path,
+        r#"{"mcpServers":{"demo":{"command":"demo-server"}}}"#,
+    )
+    .unwrap();
+    let loaded = config::load(Some(&path)).unwrap();
+    assert_eq!(loaded.execute_timeout_hard_ms, 60000);
 }
 
 #[test]

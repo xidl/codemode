@@ -2,8 +2,8 @@
 
 ## 1. 文档定位
 
-本文描述 `xidl-codemode` 的目标设计，并保留 0.3.0 已经落地的实现取舍。
-0.4 设计修订引入了三处会改变核心边界的变更：
+本文描述 `xidl-codemode` 的实际实现和背后的关键取舍。0.4 设计修订实现了
+三处会改变核心边界的变更：
 
 1. workspace 文档默认放在 `<workspace>/.cache/<run-id>/` 临时目录中，
    进程退出时删除；显式 `--docs-dir` 才使用持久目录。
@@ -12,9 +12,7 @@
 3. `timeout_ms` 分为配置硬上限和 execute 软上限；bridge 必须单独执行单次
    tool call 超时。
 
-其中临时 workspace、glue codegen 和 timeout 语义是 0.4 目标；0.3.0 仍然
-使用持久 workspace、manifest 和整体执行超时。当前实现差异集中在
-“12. 设计迁移”。
+三者均已实现；本文以当前行为为准。
 
 核心模型只有一句话：
 
@@ -98,9 +96,8 @@ MCP client --execute(code)--> QuickJS --host.callTool--> bridge 线程 --> 上�
 
 ### D1：Rust 单仓库、双二进制
 
-主二进制是 `xidl-codemode`。0.4 目标中的另一个二进制是 external xidl
-plugin `xidl-codemode-glue`；0.3.0 的插件名仍为
-`xidl-codemode-manifest`。两者放在同一个 Cargo package 中，由
+主二进制是 `xidl-codemode`，另一个是 external xidl plugin
+`xidl-codemode-glue`。两者放在同一个 Cargo package 中，由
 `cargo build --bins` 一起构建。
 
 这样做是因为 MCP server/client、QuickJS 和 xidlc 都是 Rust 生态；单仓库
@@ -171,7 +168,7 @@ optional 属性。这样下游 MCP context 不会被 N 个上游 tool schema 占
 工作区里的 `*.idl` 永远由 catalog 生成，文件内容没有用户可编辑的入口。
 如果生成结果有语法或语义问题，应该修生成器或 xidl，而不是手写覆盖。
 
-0.4 设计没有 bug-report 子命令；无法映射时由人手动收集上下文并报告。
+设计没有 bug-report 子命令；无法映射时由人手动收集上下文并报告。
 只读 `doctor --json` 提供当前 server 状态和失败原因。
 
 ### D6：QuickJS glue 由 external xidl plugin 生成
@@ -198,28 +195,32 @@ xidl-codemode-glue
 glue.js + glue.d.ts
 ```
 
-宿主不解释中间 manifest。插件生成一段可安装的 JS 适配层，例如：
+宿主不解释中间 manifest。插件生成一段可安装的 JS 适配层（实际使用
+JSON 字符串作为宿主边界，由 glue 侧做 stringify/parse），例如：
 
 ```js
-export function installXidlGlue(target, host) {
-  const server = Object.create(null);
-  server.github = Object.create(null);
-  server.github.get_issue = (...args) => host.callTool({
-    server: "github",
-    tool: "get_issue",
-    params: buildParams("get_issue", args),
-  });
-  Object.freeze(server.github);
-  Object.freeze(server);
-  Object.defineProperty(target, "github", {
-    value: server,
-    enumerable: true,
-  });
+function installXidlGlue(target, host) {
+  const __server = Object.create(null);
+  const __ns = Object.create(null);
+  __ns["get_issue"] = function(...args) {
+    if (args.length > 3) { throw new Error("too many arguments for github.get_issue (expected 3)"); }
+    const __params = {};
+    if (args.length > 0 && args[0] !== undefined) { __params.owner = args[0]; } else { throw new Error("missing required argument owner for github.get_issue"); }
+    return JSON.parse(host.callTool(JSON.stringify({ server: "github", tool: "get_issue", params: __params })));
+  };
+  Object.freeze(__ns);
+  __server["github"] = __ns;
+  Object.freeze(__server);
+  for (const [key, value] of Object.entries(__server)) {
+    Object.defineProperty(target, key, { value: value, enumerable: true });
+  }
 }
 ```
 
 `host` 是宿主注入的唯一能力入口，只提供 `callTool`，并统一执行调用数、
-超时、结果大小和错误包装。位置参数到 wire object 的转换由 glue 完成。
+单次调用超时和错误包装。`host` 不注册为全局，只作为 install 参数被 glue
+闭包捕获，用户代码无法直接访问。位置参数到 wire object 的转换由 glue
+完成。
 
 `glue.d.ts` 是同一份 IDL 的类型视图，供 AI 阅读和 CI 对生成产物做类型
 检查。QuickJS 运行 `glue.js`；不要求每次启动执行 TypeScript compiler。
@@ -257,8 +258,8 @@ return unwrap(issue);
 ```
 
 参数顺序来自生成的 IDL，而 IDL 的参数顺序来自上游
-`inputSchema.properties` 的 JSON 顺序。0.4 中 glue 固化每个位置的
-IDL 参数名、wire 名和是否 required；0.3.0 由 manifest 保存同样信息。
+`inputSchema.properties` 的 JSON 顺序。glue 固化每个位置的 IDL 参数名、
+wire 名和是否 required。
 
 运行时行为：
 
@@ -280,8 +281,9 @@ IDL 参数名、wire 名和是否 required；0.3.0 由 manifest 保存同样信�
 
 ### D10：同步桥接
 
-QuickJS 里的 tool 函数是同步函数。宿主通过全局 `__xidl_call` 进入一个独立
-bridge 线程，再由该线程上的 tokio `current_thread` runtime 调用 `rmcp`。
+QuickJS 里的 tool 函数是同步函数。glue 通过注入的 `host.callTool` 进入
+一个独立 bridge 线程，再由该线程上的 tokio `current_thread` runtime 调用
+`rmcp`。
 
 结果：
 
@@ -367,11 +369,9 @@ QuickJS 只提供：
 
 没有 `fetch`、`process`、`fs`、`child_process`、`Deno` 或 `Bun`。
 
-实现细节：宿主还会注入 `__xidl_manifest`、`__xidl_call`、`__xidl_log`
-三个全局函数/字符串，用户代码可以直接访问。它们不是额外的文件或网络
-能力，但 `__xidl_call` 可以绕过 position 映射直接调用已连接的上游 tool。
-当前配置本身是本地可信输入，因此这不是提权路径；它确实是内部实现暴露，
-后续应改为不可枚举或通过闭包封装。
+实现细节：宿主只在 bootstrap 期间临时暴露一个 log 函数（eval 完成后立即
+删除）；`host.callTool` 不注册为全局，只作为 glue 的 install 参数被闭包
+捕获，用户代码无法直接访问。
 
 ### D14：JSON Schema 映射范围
 
@@ -579,8 +579,8 @@ bundle IDL 是同一份内容的合并版本，供 xidlc/插件一次性解析�
 
 ## 5. Glue
 
-0.4 目标用 glue 替代 0.3.0 的运行时 manifest。插件输入仍是 per-server
-bundle IDL；输出是 `glue.js` 与 `glue.d.ts`。
+运行时用 glue 派生调用适配层。插件输入仍是 per-server bundle IDL；输出是
+`glue.js` 与 `glue.d.ts`。
 
 ### 5.1 生成
 
@@ -629,7 +629,7 @@ bundle IDL；输出是 `glue.js` 与 `glue.d.ts`。
 <cwd>/.codemode
 ```
 
-0.4 写入流程：
+写入流程：
 
 1. 解析 catalog 快照并生成 bundle IDL；
 2. 生成 glue、在探针 context 审计，失败则该 server 不注册；
@@ -641,21 +641,23 @@ bundle IDL；输出是 `glue.js` 与 `glue.d.ts`。
 持久 `--docs-dir` 写入使用临时文件 `.name.tmp` + rename，Unix 下最终权限
 设为 `0444`；每次启动同样清理本次没有生成的旧 namespace 文件。
 
-0.3.0 与 0.4 目标的差异：
+当前行为：
 
-- 0.3.0 写在 workspace 根目录，不自动删除，旧 namespace 文件也不清理；
-  0.4 默认 run 目录退出删除，持久目录清理本次没有生成的旧文件；
+- 默认 run 目录退出删除，单实例假设下下一次启动清空 `.cache/` 覆盖
+  SIGKILL 泄漏；持久 `--docs-dir` 清理本次没有生成的旧 namespace 文件
+  和 bundle；
+- 从配置中移除 server 后，持久模式下该 server 的旧目录整体保留，
+  只清理仍存在 server 的 stale namespace 文件；
 - 不对 server 名做 `..` 路径包含检查；配置被视为本地可信输入；
 - 多个 codemode 实例共享同一 workspace 时没有锁，后写覆盖先写；
-- 0.3.0 的 `serve`、`generate`、`doctor`、`bug-report` 都执行同一套
-  build 流程；0.4 目标中 `doctor` 只读，`bug-report` 删除，`serve`
-  创建临时 run 目录，`generate` 只在显式 `--docs-dir` 时导出持久文档。
+- `serve` 创建临时 run 目录；`generate` 只在显式 `--docs-dir` 时导出
+  持久文档；`doctor` 只读，不写任何文件；`bug-report` 已删除。
 
 ## 7. QuickJS 执行
 
 ### 7.1 限制
 
-| 项目 | 0.4 目标值 |
+| 项目 | 当前值 |
 | --- | --- |
 | 代码大小 | 256 KiB（字节） |
 | 默认 execute 软超时 | 10 秒 |
@@ -709,8 +711,7 @@ execute 剩余 deadline。这避免 hung upstream 阻塞到 QuickJS interrupt �
 - `limit_exceeded`：代码或结果超限；
 - `internal`：runtime 创建、glue 安装等宿主失败。
 
-没有独立的 `tool_error` 或 `serialization_error` 分类。0.3.0 仍使用
-`timeout` 表示整体超时，也没有 `tool_timeout`。
+没有独立的 `tool_error` 或 `serialization_error` 分类。
 
 ### 7.4 输出
 
@@ -781,15 +782,12 @@ clamp。未知 tool 名同样返回 invalid params。
 - 没有 workspace 路径包含检查；
 - 没有 `--read-only`、`--allow-tools`、`--deny-tools` 过滤器；
 - 没有对 `execute.code` 的 NUL/控制字符检查；
-- 0.3.0 manifest 没有参数级一致性校验；0.4 用 glue 固化参数映射并用
-  探针审计 tool 集合；
-- 用户代码可以直接访问 `__xidl_call` 等内部全局；
 - 上游 instructions 是 prompt injection 的潜在载体，当前只做了边界标记
   和长度限制。
 
 ## 10. 当前未实现
 
-以下能力出现在早期计划中，但 0.3.0 没有实现：
+以下能力出现在早期计划中，尚未实现：
 
 - TOML/JSON 多配置文件合并、同名冲突检测、`--allow-shadow`；
 - `inheritEnv`；
@@ -797,10 +795,9 @@ clamp。未知 tool 名同样返回 invalid params。
 - 连接失败后的 lazy retry、`--refresh`；
 - `--read-only` / allow/deny tool 过滤；
 - 独立 SSE transport；
-- `.zod.ts` 生成（0.4 会生成 glue `.d.ts`）；
+- `.zod.ts` 生成（glue `.d.ts` 已实现）；
 - `$ref` / `$defs` / enum / `allOf` / `oneOf` / `outputSchema` 的精确映射；
 - 跨 namespace `common` 类型和公共字段抽取；
-- 0.3.0 manifest 的参数/flag/IDL 路径深度校验；
 - 真正异步的 Promise tool call；
 - 结果截断（当前只有超限报错）；
 - 多实例 workspace 锁和旧文件清理。
@@ -811,7 +808,7 @@ clamp。未知 tool 名同样返回 invalid params。
 2. 所有 `mcp.<server>.<tool>` 映射必须来自 IDL 派生的 glue；glue 必须由
    bundle IDL 经 `xidl-codemode-glue` 生成并通过探针审计。
 3. 所有 tool 调用必须经过封装后的 `host.callTool`、bridge 线程和统一限额；
-   0.3.0 当前仍暴露 `__xidl_call`，0.4 必须封装。
+   用户代码无法直接访问宿主对象。
 4. 每次 execute 使用新的 QuickJS runtime，不跨执行复用 JS 状态。
 5. IDL、`agents.md` 和 glue 必须来自同一次 catalog 快照。
 6. `execute.code` 只通过 stdio 传入，不写入工作区。
@@ -824,17 +821,3 @@ clamp。未知 tool 名同样返回 invalid params。
     进程退出删除；显式 `--docs-dir` 才允许持久保存。
 12. execute timeout 是配置硬上限内的软上限；单次上游调用有独立
     `tool_timeout`。
-
-## 12. 设计迁移
-
-0.3.0 到 0.4 的迁移按依赖顺序是：
-
-1. workspace 先迁到 `.cache/<run-id>/`，清理 stale 文件；`--docs-dir`
-   作为显式持久 fallback。
-2. external plugin 从 `manifest.json` 改为输出 `glue.js` 和 `glue.d.ts`；
-   宿主从解释 manifest 改为安装 glue。
-3. QuickJS 注入从公开 `__xidl_call` 改为封装的 `host.callTool`；安装
-   glue 时同步完成 tool 集合审计。
-4. timeout 从单一整体值改为配置硬上限 + execute 软上限 + 单次
-   `tool_timeout`。
-5. `doctor` 改为只读；删除 `bug-report`。
