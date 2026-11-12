@@ -16,10 +16,11 @@ use crate::sandbox::{self, RuntimeServer, ToolCaller};
 pub struct AppState {
     pub bridge: Arc<dyn ToolCaller>,
     pub servers: Vec<RuntimeServer>,
+    pub docs_dir: std::path::PathBuf,
+    pub connected_servers: Vec<String>,
     pub instructions: String,
     pub errors: Vec<String>,
     pub execute_timeout_hard_ms: u64,
-    pub execute_catalog: Vec<String>,
     pub tool_index: Vec<ServerCatalog>,
 }
 
@@ -122,10 +123,12 @@ impl ServerHandler for CodemodeServer {
         if arguments.is_empty() {
             return Ok(CallToolResult::success(vec![ContentBlock::text(
                 serde_json::to_string(&serde_json::json!({
-                    "catalog": self.state.execute_catalog,
+                    "connectedServers": self.state.connected_servers,
+                    "docsRoot": self.state.docs_dir,
+                    "callShape": "tools.<server>.<tool>(arg1, arg2, ...)",
                     "examples": [
-                        "return mcp.<server>.<tool>(arg1, arg2);",
-                        "return mcp[\"server-name\"][\"tool.name\"](arg);"
+                        "return tools.<server>.<tool>(arg1, arg2);",
+                        "return tools[\"server-name\"][\"tool.name\"](arg);"
                     ],
                     "hint": "Read the API docs directory for signatures; return values are plain JSON."
                 }))
@@ -167,7 +170,7 @@ fn execute_tool_with_limit(state: &AppState) -> Tool {
         "properties": {
             "code": {
                 "type": "string",
-                "description": "JavaScript source. Use the injected global `mcp` object with positional arguments, e.g. `return mcp.server.tool(arg1, arg2);`"
+                "description": "JavaScript source. Use the injected global `tools` object with positional arguments, e.g. `return tools.server.tool(arg1, arg2);`"
             },
             "timeout_ms": {
                 "type": "integer",
@@ -182,11 +185,11 @@ fn execute_tool_with_limit(state: &AppState) -> Tool {
     Tool::new(
         "execute",
         format!(
-            "Execute JavaScript in a QuickJS sandbox. MCP tools are injected as \
-             `mcp.<server>.<tool>(arg1, arg2, ...)` with positional arguments. \
+            "Execute sandboxed JavaScript. Connected tools are injected as \
+             `tools.<server>.<tool>(arg1, arg2, ...)` with positional arguments. \
              Skip an optional argument before a required one with `null`, and use \
              bracket access for invalid identifiers, for example \
-             `mcp[\"server-name\"][\"tool.name\"](arg)`. Returns are plain JSON \
+             `tools[\"server-name\"][\"tool.name\"](arg)`. Returns are plain JSON \
              values and tool failures throw. `timeout_ms` defaults to \
              {DEFAULT_EXECUTE_TIMEOUT_MS} ms and cannot exceed {} ms.",
             state.execute_timeout_hard_ms

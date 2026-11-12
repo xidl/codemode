@@ -515,10 +515,11 @@ fn run_js(context: RunContext) -> std::result::Result<JsOutcome, (String, Option
             .map_err(|err| (format!("install callTool: {err}"), None))?;
         let host_value: JsValue = host.into();
 
-        let mcp = Object::new(ctx.clone()).map_err(|err| (format!("create mcp: {err}"), None))?;
+        let tools =
+            Object::new(ctx.clone()).map_err(|err| (format!("create tools: {err}"), None))?;
         globals
-            .set("mcp", mcp.clone())
-            .map_err(|err| (format!("inject mcp: {err}"), None))?;
+            .set("tools", tools.clone())
+            .map_err(|err| (format!("inject tools: {err}"), None))?;
         for server in servers {
             let wrapped = format!(
                 "(function(){{\n{}\nreturn installXidlGlue;\n}})()",
@@ -527,13 +528,13 @@ fn run_js(context: RunContext) -> std::result::Result<JsOutcome, (String, Option
             let install: Function = ctx
                 .eval::<Function, _>(wrapped.as_str())
                 .map_err(|err| (format!("evaluate glue for {}: {err}", server.name), None))?;
-            let mcp_value: JsValue = mcp.clone().into();
+            let target: JsValue = tools.clone().into();
             install
-                .call::<_, ()>((mcp_value, host_value.clone()))
+                .call::<_, ()>((target, host_value.clone()))
                 .map_err(|err| (format!("install glue for {}: {err}", server.name), None))?;
         }
-        ctx.eval::<(), _>("Object.freeze(globalThis.mcp);")
-            .map_err(|err| (format!("freeze mcp: {err}"), None))?;
+        ctx.eval::<(), _>("Object.freeze(globalThis.tools);")
+            .map_err(|err| (format!("freeze tools: {err}"), None))?;
 
         let catalog =
             Object::new(ctx.clone()).map_err(|err| (format!("create catalog: {err}"), None))?;

@@ -64,7 +64,7 @@ MCP client --execute(code)--> QuickJS --host.callTool--> bridge 线程 --> 上�
 3. 把每个 server 的 tool schema 按 namespace 生成 IDL。
 4. 生成 `agents.md`（仅当上游提供 `initialize.instructions`）。
 5. 用 bundle IDL 调用 external xidl plugin，生成 QuickJS glue。
-6. 在探针 context 安装 glue，并与 catalog 对账后注册 `mcp.<server>`。
+6. 在探针 context 安装 glue，并与 catalog 对账后注册 `tools.<server>`。
 7. 对外暴露 `execute` 和只读 `search_tools`。
 
 ## 3. 关键决策
@@ -159,7 +159,7 @@ optional 属性。这样下游 MCP context 不会被 N 个上游 tool schema 占
 
 ```json
 {
-  "code": "return mcp.github.get_issue('xidl', 'xidl', 361);",
+  "code": "return tools.github.get_issue('xidl', 'xidl', 361);",
   "timeout_ms": 10000
 }
 ```
@@ -233,7 +233,7 @@ function installXidlGlue(target, host) {
 （如果同目录存在插件）。debug 构建下还会尝试 `target/debug`。
 
 安装后仍要做一次审计：先在一个探针 QuickJS context 安装 glue，枚举生成的
-`mcp` 对象，再与 catalog 对账。审计只保证 tool 集合和 JS 名一致；参数
+`tools` 对象，再与 catalog 对账。审计只保证 tool 集合和 JS 名一致；参数
 契约由 IDL -> glue 的同一份编译产物保证，不再由运行时解释第二份 manifest。
 
 ### D7：namespace 划分
@@ -257,7 +257,7 @@ MCP tool 名本身是扁平的。当前分组规则按顺序执行：
 调用形式：
 
 ```js
-const issue = mcp.github.get_issue("xidl", "xidl", 361);
+const issue = tools.github.get_issue("xidl", "xidl", 361);
 return issue;
 ```
 
@@ -300,7 +300,7 @@ QuickJS 里的 tool 函数是同步函数。glue 通过注入的 `host.callTool`
 
 ### D11：归一化的 codemode 返回值
 
-`mcp.<server>.<tool>(...)` 只返回普通 JS/JSON 值：
+`tools.<server>.<tool>(...)` 只返回普通 JS/JSON 值：
 
 | 上游结果 | codemode 返回值 |
 | --- | --- |
@@ -358,7 +358,7 @@ Authorization = "Bearer ..."
 QuickJS 只提供：
 
 - 标准 ECMAScript 内置对象；
-- `mcp`；
+- `tools`；
 - tool 调用直接返回普通 JS/JSON 值；
 - `console.log/info/warn/error`。
 
@@ -403,13 +403,13 @@ QuickJS 只提供：
 
 server namespace 同时注册：
 
-- `mcp["<原始 server 名>"]`；
-- `mcp.<sanitize 后的 server 名>`（如果不同）。
+- `tools["<原始 server 名>"]`；
+- `tools.<sanitize 后的 server 名>`（如果不同）。
 
 tool 函数同时注册：
 
-- `mcp.server["<原始 tool 名>"]`；
-- `mcp.server.<sanitize 后的 tool 名>`（如果不同）。
+- `tools.server["<原始 tool 名>"]`；
+- `tools.server.<sanitize 后的 tool 名>`（如果不同）。
 
 namespace 对象会被冻结。这样即使 tool 名包含 `.`、`-` 或其他非法字符，
 也仍然可以调用。
@@ -423,12 +423,12 @@ namespace 对象会被冻结。这样即使 tool 名包含 `.`、`-` 或其他�
 codemode 的 server instructions 包含：
 
 1. workspace 绝对路径；
-2. `mcp.<server>.<tool>(arg1, arg2, ...)` 和普通 JSON 返回值的调用方式；
-3. IDL 的 glob 路径；
-4. 标记为 untrusted 的上游 instructions；
-5. 启动时失败的 server 列表。
+2. `tools.<server>.<tool>(arg1, arg2, ...)` 和普通 JSON 返回值的调用方式；
+3. docs root 以及 IDL / `agents.md` 的路径约定；
+4. 启动时失败的 server 列表。
 
-上游 instructions 会被截断到总共约 32 KiB，并明确标注为不可信数据。
+运行时 instructions 不注入上游 instructions 正文；只引用按需读取的
+`agents.md`，并明确其为不可信数据。
 
 ### D17：不做磁盘 cache
 
@@ -597,7 +597,7 @@ bundle IDL 是同一份内容的合并版本，供 xidlc/插件一次性解析�
 
 ### 5.3 安装审计
 
-宿主在探针 QuickJS context 安装 glue，枚举 `mcp` object，并要求：
+宿主在探针 QuickJS context 安装 glue，枚举 `tools` object，并要求：
 
 - 每个 catalog tool 恰好出现一次；
 - 没有额外 tool；
@@ -795,7 +795,7 @@ clamp。未知 tool 名同样返回 invalid params。
 ## 11. 架构不变量
 
 1. 对外只注册 `execute`，不注册上游 tool 或读取 API。
-2. 所有 `mcp.<server>.<tool>` 映射必须来自 IDL 派生的 glue；glue 必须由
+2. 所有 `tools.<server>.<tool>` 映射必须来自 IDL 派生的 glue；glue 必须由
    bundle IDL 经 `xidl-codemode-glue` 生成并通过探针审计。
 3. 所有 tool 调用必须经过封装后的 `host.callTool`、bridge 线程和统一限额；
    用户代码无法直接访问宿主对象。

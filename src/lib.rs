@@ -14,7 +14,6 @@ use std::sync::Arc;
 use serde::Serialize;
 
 use crate::bridge::UpstreamManager;
-use crate::catalog::ServerCatalog;
 use crate::error::Result;
 use crate::sandbox::RuntimeServer;
 use crate::server::AppState;
@@ -48,10 +47,7 @@ pub fn build(options: &BuildOptions) -> Result<BuiltApp> {
     let mut runtime_servers = Vec::new();
     let mut summaries = Vec::new();
     let mut errors = Vec::new();
-    let mut docs_list = Vec::new();
-    let mut server_catalog = Vec::new();
-    let mut namespace_list = Vec::new();
-    let mut execute_catalog = Vec::new();
+    let mut connected_servers = Vec::new();
     let mut tool_index = Vec::new();
     let mut kept = Vec::new();
     for spec in loaded.servers {
@@ -77,25 +73,7 @@ pub fn build(options: &BuildOptions) -> Result<BuiltApp> {
                             js_name: catalog.js_name.clone(),
                             glue: glue.js,
                         });
-                        docs_list.push((catalog.name.clone(), generated.agents_md.clone()));
-                        let namespaces: Vec<String> = generated
-                            .namespaces
-                            .iter()
-                            .map(|namespace| namespace.name.clone())
-                            .collect();
-                        namespace_list.push(namespaces.clone());
-                        server_catalog.push(format!(
-                            "- `{}`: {} tools, docs `{}`",
-                            catalog.js_name,
-                            catalog.tools.len(),
-                            docs.path.join(&catalog.name).join("*.idl").display()
-                        ));
-                        execute_catalog.push(format!(
-                            "mcp.{}.tool_name(arg1, arg2); // {} tools; namespaces: {}",
-                            catalog.js_name,
-                            catalog.tools.len(),
-                            namespaces.join(", ")
-                        ));
+                        connected_servers.push(catalog.js_name.clone());
                         tool_index.push(catalog.clone());
                         summaries.push(ServerSummary {
                             name: catalog.name,
@@ -129,26 +107,20 @@ pub fn build(options: &BuildOptions) -> Result<BuiltApp> {
         workspace::cleanup_stale(&docs.path, &kept)?;
     }
 
-    let instructions = build_instructions(
-        &docs.path,
-        &docs_list,
-        &server_catalog,
-        &namespace_list,
-        &execute_catalog,
-        &tool_index,
-        &errors,
-    );
+    let instructions = build_instructions(&docs.path, &connected_servers, &errors);
+    let docs_dir = docs.path.clone();
     Ok(BuiltApp {
         state: Arc::new(AppState {
             bridge,
             servers: runtime_servers,
+            docs_dir: docs_dir.clone(),
+            connected_servers,
             instructions,
-            execute_catalog,
             tool_index,
             errors,
             execute_timeout_hard_ms: loaded.execute_timeout_hard_ms,
         }),
-        docs_dir: docs.path,
+        docs_dir,
         docs_guard: docs.guard,
         summaries,
     })
@@ -238,37 +210,7 @@ fn prepend_path(dir: &Path) {
     }
 }
 
-pub fn build_instructions(
-    docs_dir: &Path,
-    docs: &[(String, String)],
-    server_catalog: &[String],
-    namespace_list: &[Vec<String>],
-    execute_catalog: &[String],
-    _tool_index: &[ServerCatalog],
-    errors: &[String],
-) -> String {
-    let mut upstream = String::new();
-    let mut injected = false;
-    for (name, agents) in docs {
-        if agents.trim().is_empty() {
-            continue;
-        }
-        injected = true;
-        upstream.push_str(&format!("### {name}\n\n"));
-        upstream.push_str(agents);
-        if upstream.len() > 32 * 1024 {
-            let mut cut = 32 * 1024;
-            while !upstream.is_char_boundary(cut) {
-                cut -= 1;
-            }
-            upstream.truncate(cut);
-            upstream.push_str("\n\n[instructions truncated; read the docs directory files]\n");
-            break;
-        }
-    }
-    if !injected {
-        upstream.push_str("_No upstream MCP instructions were provided._\n");
-    }
+pub fn build_instructions(docs_dir: &Path, server_names: &[String], errors: &[String]) -> String {
     let mut error_section = String::new();
     for error in errors {
         error_section.push_str(&format!("- {error}\n"));
@@ -276,45 +218,14 @@ pub fn build_instructions(
     if error_section.is_empty() {
         error_section.push_str("_None._\n");
     }
-    let catalog_summary = if server_catalog.is_empty() {
-        "No MCP servers connected".to_string()
+    let server_names = if server_names.is_empty() {
+        "none".to_string()
     } else {
-        let names: Vec<String> = server_catalog
-            .iter()
-            .filter_map(|line| line.split('`').nth(1).map(str::to_string))
-            .collect();
-        names.join(", ")
-    };
-    let server_catalog = if server_catalog.is_empty() {
-        "_No MCP servers are connected._\n".to_string()
-    } else {
-        let mut out = String::new();
-        for (line, namespaces) in server_catalog.iter().zip(namespace_list) {
-            out.push_str(line);
-            if !namespaces.is_empty() {
-                out.push_str(&format!("; namespaces: {}\n", namespaces.join(", ")));
-            } else {
-                out.push('\n');
-            }
-        }
-        out
-    };
-    let execute_catalog = if execute_catalog.is_empty() {
-        "_No MCP servers are connected._\n".to_string()
-    } else {
-        let mut out = String::new();
-        for example in execute_catalog {
-            out.push_str(example);
-            out.push('\n');
-        }
-        out
+        server_names.join(", ")
     };
     let instructions = include_str!("../docs/instructions.md")
-        .replace("{CATALOG_SUMMARY}", &catalog_summary)
+        .replace("{SERVER_NAMES}", &server_names)
         .replace("{DOCS_DIR}", &docs_dir.display().to_string())
-        .replace("{SERVER_CATALOG}", &server_catalog)
-        .replace("{EXECUTE_CATALOG}", &execute_catalog)
-        .replace("{UPSTREAM_INSTRUCTIONS}", &upstream)
         .replace("{ERRORS}", &error_section);
     instructions
 }

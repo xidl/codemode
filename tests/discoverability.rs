@@ -69,31 +69,21 @@ fn catalog_helpers_are_frozen_and_share_index() {
 }
 
 #[test]
-fn instructions_expose_server_catalog_and_execute_catalog() {
+fn instructions_are_compact_and_reference_upstream_notes() {
     let root = tempfile::tempdir().unwrap();
     let docs = workspace::prepare_in(root.path(), None).unwrap();
-    let demo = catalog("demo");
+    let mut demo = catalog("demo");
+    demo.instructions = Some("UNTRUSTED_UPSTREAM_TEXT".to_string());
     let generated = idl::generate(&demo);
     workspace::write_server(&docs.path, &generated).unwrap();
-    let docs_list = vec![("demo".to_string(), generated.agents_md.clone())];
-    let namespaces: Vec<String> = generated
-        .namespaces
-        .iter()
-        .map(|namespace| namespace.name.clone())
-        .collect();
-    let server_catalog = vec![format!("- `{}`: {} tools", demo.js_name, demo.tools.len())];
-    let execute_catalog = vec![format!("mcp.{}.tool_name(arg1, arg2);", demo.js_name)];
-    let instructions = xidl_codemode::build_instructions(
-        &docs.path,
-        &docs_list,
-        &server_catalog,
-        &[namespaces],
-        &execute_catalog,
-        std::slice::from_ref(&demo),
-        &[],
-    );
-    assert!(instructions.contains("Connected MCP servers (demo)."));
-    assert!(instructions.contains("## Execute catalog"));
-    assert!(instructions.contains("mcp.demo.tool_name(arg1, arg2);"));
-    assert!(instructions.contains("namespaces: issues"));
+    let connected_servers = vec![demo.js_name.clone()];
+    let instructions = xidl_codemode::build_instructions(&docs.path, &connected_servers, &[]);
+    assert!(instructions.contains("Connected servers (demo)."));
+    assert!(instructions.contains("tools.<server>.<tool>(arg1, arg2, ...)"));
+    assert!(instructions.contains("sandbox-local JavaScript bindings"));
+    assert!(instructions.contains("<server>/agents.md"));
+    assert!(!instructions.contains("UNTRUSTED_UPSTREAM_TEXT"));
+    assert!(!instructions.contains("Available MCP servers"));
+    assert!(!instructions.contains("## Execute catalog"));
+    assert!(!instructions.contains("QuickJS"));
 }

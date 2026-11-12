@@ -106,7 +106,7 @@ fn positional_arguments_map_to_wire_object() {
         &caller,
         &[fake_server()],
         &[],
-        "return mcp.fake.echo('hello', 7);",
+        "return tools.fake.echo('hello', 7);",
         Duration::from_secs(5),
     );
     assert!(outcome.ok, "{:?}", outcome.error);
@@ -128,7 +128,7 @@ fn optional_positional_argument_can_be_omitted() {
         &caller,
         &[fake_server()],
         &[],
-        "return mcp.fake.echo('hello');",
+        "return tools.fake.echo('hello');",
         Duration::from_secs(5),
     );
     assert!(outcome.ok, "{:?}", outcome.error);
@@ -145,7 +145,7 @@ fn optional_null_positional_argument_is_omitted() {
         &caller,
         &[fake_server()],
         &[],
-        "return mcp.fake.echo('hello', null);",
+        "return tools.fake.echo('hello', null);",
         Duration::from_secs(5),
     );
     assert!(outcome.ok, "{:?}", outcome.error);
@@ -162,7 +162,7 @@ fn required_null_positional_argument_is_passed() {
         &caller,
         &[fake_server()],
         &[],
-        "return mcp.fake.echo(null);",
+        "return tools.fake.echo(null);",
         Duration::from_secs(5),
     );
     assert!(outcome.ok, "{:?}", outcome.error);
@@ -179,7 +179,7 @@ fn required_undefined_positional_argument_fails() {
         &caller,
         &[fake_server()],
         &[],
-        "const value = undefined; return mcp.fake.echo(value);",
+        "const value = undefined; return tools.fake.echo(value);",
         Duration::from_secs(5),
     );
     assert!(!outcome.ok);
@@ -203,7 +203,7 @@ fn missing_required_positional_argument_fails() {
         &caller,
         &[fake_server()],
         &[],
-        "return mcp.fake.echo();",
+        "return tools.fake.echo();",
         Duration::from_secs(5),
     );
     assert!(!outcome.ok);
@@ -228,7 +228,7 @@ fn extra_positional_argument_fails() {
         &caller,
         &[fake_server()],
         &[],
-        "return mcp.fake.echo('a', 1, 2, 3);",
+        "return tools.fake.echo('a', 1, 2, 3);",
         Duration::from_secs(5),
     );
     assert!(!outcome.ok);
@@ -282,7 +282,7 @@ function installXidlGlue(target, host) {
         &bridge(),
         &[server],
         &[],
-        "try { return mcp[\"fake-name\"][\"tool.name\"](\"ok\"); } catch (error) { return error.message; }",
+        "try { return tools[\"fake-name\"][\"tool.name\"](\"ok\"); } catch (error) { return error.message; }",
         Duration::from_secs(5),
     );
     assert!(outcome.ok, "{:?}", outcome.error);
@@ -297,12 +297,12 @@ function installXidlGlue(target, host) {
 }
 
 #[test]
-fn mcp_object_is_frozen() {
+fn tools_object_is_frozen() {
     let outcome = sandbox::execute(
         &bridge(),
         &[fake_server()],
         &[],
-        "return Object.isFrozen(mcp) ? 'frozen' : 'mutable';",
+        "return Object.isFrozen(tools) ? 'frozen' : 'mutable';",
         Duration::from_secs(5),
     );
     assert!(outcome.ok, "{:?}", outcome.error);
@@ -317,7 +317,7 @@ fn proto_wire_name_survives_serialization() {
         &caller,
         &[fake_server()],
         &[],
-        "return mcp.fake.echo('a', 1, 'p');",
+        "return tools.fake.echo('a', 1, 'p');",
         Duration::from_secs(5),
     );
     assert!(outcome.ok, "{:?}", outcome.error);
@@ -336,7 +336,7 @@ fn tool_timeout_is_reported_as_tool_timeout() {
         &caller,
         &[fake_server()],
         &[],
-        "return mcp.fake.echo('hello');",
+        "return tools.fake.echo('hello');",
         Duration::from_secs(5),
     );
     assert!(!outcome.ok);
@@ -356,7 +356,7 @@ fn caught_tool_timeout_does_not_contaminate_later_errors() {
         &caller,
         &[fake_server()],
         &[],
-        "try { mcp.fake.echo('hello'); } catch (e) { throw new Error('different failure'); }",
+        "try { tools.fake.echo('hello'); } catch (e) { throw new Error('different failure'); }",
         Duration::from_secs(5),
     );
     assert!(!outcome.ok);
@@ -373,7 +373,7 @@ fn failed_tool_call_is_reported_as_js_error() {
         &caller,
         &[fake_server()],
         &[],
-        "return mcp.fake.echo('hello');",
+        "return tools.fake.echo('hello');",
         Duration::from_secs(5),
     );
     assert!(!outcome.ok);

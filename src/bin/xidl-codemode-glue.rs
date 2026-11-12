@@ -118,9 +118,9 @@ fn emit_js(server: &str, interfaces: &[Interface]) -> String {
 
 fn emit_tool(out: &mut String, server: &str, op: &OpDcl) {
     let js_name = js_string(&op.ident);
-    let mcp_name =
+    let wire_tool_name =
         annotation_string(&op.annotations, "mcp_tool").unwrap_or_else(|| op.ident.clone());
-    let mcp_json = js_string(&mcp_name);
+    let wire_tool_json = js_string(&wire_tool_name);
     let params = op
         .parameter
         .as_ref()
@@ -142,7 +142,7 @@ fn emit_tool(out: &mut String, server: &str, op: &OpDcl) {
         "    if (args.length > {}) {{ throw new Error(\"too many arguments for {}.{} (expected {})\"); }}\n",
         params.len(),
         escape_js(server),
-        escape_js(&mcp_name),
+        escape_js(&wire_tool_name),
         params.len()
     ));
     out.push_str("    const __params = Object.create(null);\n");
@@ -163,17 +163,17 @@ fn emit_tool(out: &mut String, server: &str, op: &OpDcl) {
                 "{check} else {{ throw new Error(\"missing required argument {} for {}.{}\"); }}\n",
                 escape_js(name),
                 escape_js(server),
-                escape_js(&mcp_name)
+                escape_js(&wire_tool_name)
             ));
         }
     }
     out.push_str(&format!(
-        "    return JSON.parse(host.callTool(JSON.stringify({{ server: {server}, tool: {mcp_json}, params: __params }})));\n",
+        "    return JSON.parse(host.callTool(JSON.stringify({{ server: {server}, tool: {wire_tool_json}, params: __params }})));\n",
         server = js_string(server),
     ));
     out.push_str("  };\n");
-    if mcp_name != op.ident {
-        out.push_str(&format!("  __ns[{mcp_json}] = __ns[{js_name}];\n"));
+    if wire_tool_name != op.ident {
+        out.push_str(&format!("  __ns[{wire_tool_json}] = __ns[{js_name}];\n"));
     }
 }
 
@@ -188,10 +188,10 @@ fn emit_dts(server: &str, interfaces: &[Interface]) -> String {
     for interface in interfaces {
         out.push_str(&format!("export interface {} {{\n", interface.name));
         for op in &interface.operations {
-            let mcp_name =
+            let wire_tool_name =
                 annotation_string(&op.annotations, "mcp_tool").unwrap_or_else(|| op.ident.clone());
-            if mcp_name != op.ident {
-                out.push_str(&format!("  /** MCP tool: {mcp_name} */\n"));
+            if wire_tool_name != op.ident {
+                out.push_str(&format!("  /** MCP tool: {wire_tool_name} */\n"));
             }
             let params = op
                 .parameter

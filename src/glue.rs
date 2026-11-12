@@ -63,15 +63,15 @@ pub fn audit(js: &str, catalog: &ServerCatalog) -> Result<()> {
         let install: Function = ctx
             .eval::<Function, _>(wrapped.as_str())
             .map_err(|err| Error::Glue(format!("glue is missing installXidlGlue: {err}")))?;
-        let mcp = Object::new(ctx.clone())
+        let tools = Object::new(ctx.clone())
             .map_err(|err| Error::Glue(format!("create probe target: {err}")))?;
         ctx.globals()
-            .set("__xidl_probe", mcp.clone())
+            .set("__xidl_probe", tools.clone())
             .map_err(|err| Error::Glue(format!("install probe target: {err}")))?;
-        let mcp_value: rquickjs::Value = mcp.clone().into();
+        let tools_value: rquickjs::Value = tools.clone().into();
         let host_value: rquickjs::Value = host.into();
         install
-            .call::<_, ()>((mcp_value, host_value))
+            .call::<_, ()>((tools_value, host_value))
             .map_err(|err| Error::Glue(format!("installXidlGlue failed: {err}")))?;
         let raw: String = ctx
             .eval(

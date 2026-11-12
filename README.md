@@ -5,7 +5,7 @@ gateway**. It exposes exactly one MCP tool, `execute`, and injects the upstream
 tools into a QuickJS sandbox as:
 
 ```js
-mcp.github.get_issue("xidl", "xidl", 361)
+tools.github.get_issue("xidl", "xidl", 361)
 ```
 
 The generated xidl contracts are written to a workspace on disk so that coding
@@ -33,7 +33,7 @@ upstream MCP servers --tools/list--> catalog
    |                                             |
    +---------------------------------------------+
                                                  v
-MCP client --execute(code)--> QuickJS --mcp.<server>.<tool>--> upstream MCP
+MCP client --execute(code)--> QuickJS --tools.<server>.<tool>--> upstream MCP
 ```
 
 The current behavior and the reasoning behind it are documented in
@@ -137,7 +137,7 @@ does not recurse.
 The agent calls `execute` with JavaScript:
 
 ```js
-const result = mcp.codegraph.codegraph_explore(
+const result = tools.codegraph.codegraph_explore(
   "xidl generator",
   null,
   "/path/to/xidl",
@@ -173,7 +173,7 @@ workspace files.
 
 ## Limits and security
 
-- QuickJS has no filesystem, network, subprocess, or environment access.
+- The JavaScript sandbox has no filesystem, network, subprocess, or environment access.
 - `execute.code` is limited to 256 KiB, 10s default timeout (soft limit; the
   configured `executeTimeoutHardMs` hard limit defaults to 60s), 128 MiB
   memory, 100 tool calls, 1 MiB result, and bounded console logs. Each
@@ -182,7 +182,8 @@ workspace files.
 - Upstream child processes get a cleared environment plus `PATH`, `HOME`, and
   explicitly configured variables.
 - `initialize.instructions` from upstream servers is written to `agents.md`
-  and injected into the gateway instructions as untrusted, length-capped text.
+  under the docs root as untrusted data. The gateway instructions reference it
+  instead of injecting its text.
 - Config env/header values are not written to generated files. Logs and error
   strings are not systematically redacted yet, so avoid putting secrets in
   commands or URLs that may appear in error output.
