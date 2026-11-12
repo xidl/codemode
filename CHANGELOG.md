@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/xidl/codemode/compare/v0.3.0...v0.4.0) (2026-11-12)
+
+
+### Features
+
+* replace runtime manifest with quickjs glue ([2a636c3](https://github.com/xidl/codemode/commit/2a636c32af5f88ebd5aadef324db76b940ce441b))
+
 ## [0.3.0](https://github.com/xidl/codemode/compare/v0.2.0...v0.3.0) (2026-11-10)
 
 
