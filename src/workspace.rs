@@ -22,7 +22,7 @@ pub fn prepare(docs_dir: Option<&Path>) -> Result<DocsDir> {
     prepare_in(&workspace_root, docs_dir)
 }
 
-fn prepare_in(workspace_root: &Path, docs_dir: Option<&Path>) -> Result<DocsDir> {
+pub fn prepare_in(workspace_root: &Path, docs_dir: Option<&Path>) -> Result<DocsDir> {
     match docs_dir {
         Some(dir) => {
             std::fs::create_dir_all(dir)

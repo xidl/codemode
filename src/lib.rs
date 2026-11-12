@@ -49,6 +49,8 @@ pub fn build(options: &BuildOptions) -> Result<BuiltApp> {
     let mut errors = Vec::new();
     let mut docs_list = Vec::new();
     let mut server_catalog = Vec::new();
+    let mut namespace_list = Vec::new();
+    let mut execute_catalog = Vec::new();
     let mut kept = Vec::new();
     for spec in loaded.servers {
         match bridge.discover(spec.clone()) {
@@ -74,11 +76,23 @@ pub fn build(options: &BuildOptions) -> Result<BuiltApp> {
                             glue: glue.js,
                         });
                         docs_list.push((catalog.name.clone(), generated.agents_md.clone()));
+                        let namespaces: Vec<String> = generated
+                            .namespaces
+                            .iter()
+                            .map(|namespace| namespace.name.clone())
+                            .collect();
+                        namespace_list.push(namespaces.clone());
                         server_catalog.push(format!(
                             "- `{}`: {} tools, docs `{}`",
                             catalog.js_name,
                             catalog.tools.len(),
                             docs.path.join(&catalog.name).join("*.idl").display()
+                        ));
+                        execute_catalog.push(format!(
+                            "mcp.{}.tool_name(arg1, arg2); // {} tools; namespaces: {}",
+                            catalog.js_name,
+                            catalog.tools.len(),
+                            namespaces.join(", ")
                         ));
                         summaries.push(ServerSummary {
                             name: catalog.name,
@@ -112,12 +126,20 @@ pub fn build(options: &BuildOptions) -> Result<BuiltApp> {
         workspace::cleanup_stale(&docs.path, &kept)?;
     }
 
-    let instructions = build_instructions(&docs.path, &docs_list, &server_catalog, &errors);
+    let instructions = build_instructions(
+        &docs.path,
+        &docs_list,
+        &server_catalog,
+        &namespace_list,
+        &execute_catalog,
+        &errors,
+    );
     Ok(BuiltApp {
         state: Arc::new(AppState {
             bridge,
             servers: runtime_servers,
             instructions,
+            execute_catalog,
             errors,
             execute_timeout_hard_ms: loaded.execute_timeout_hard_ms,
         }),
@@ -211,10 +233,12 @@ fn prepend_path(dir: &Path) {
     }
 }
 
-fn build_instructions(
+pub fn build_instructions(
     docs_dir: &Path,
     docs: &[(String, String)],
     server_catalog: &[String],
+    namespace_list: &[Vec<String>],
+    execute_catalog: &[String],
     errors: &[String],
 ) -> String {
     let mut upstream = String::new();
@@ -246,19 +270,44 @@ fn build_instructions(
     if error_section.is_empty() {
         error_section.push_str("_None._\n");
     }
+    let catalog_summary = if server_catalog.is_empty() {
+        "No MCP servers connected".to_string()
+    } else {
+        let names: Vec<String> = server_catalog
+            .iter()
+            .filter_map(|line| line.split('`').nth(1).map(str::to_string))
+            .collect();
+        names.join(", ")
+    };
     let server_catalog = if server_catalog.is_empty() {
         "_No MCP servers are connected._\n".to_string()
     } else {
         let mut out = String::new();
-        for server in server_catalog {
-            out.push_str(server);
+        for (line, namespaces) in server_catalog.iter().zip(namespace_list) {
+            out.push_str(line);
+            if !namespaces.is_empty() {
+                out.push_str(&format!("; namespaces: {}\n", namespaces.join(", ")));
+            } else {
+                out.push('\n');
+            }
+        }
+        out
+    };
+    let execute_catalog = if execute_catalog.is_empty() {
+        "_No MCP servers are connected._\n".to_string()
+    } else {
+        let mut out = String::new();
+        for example in execute_catalog {
+            out.push_str(example);
             out.push('\n');
         }
         out
     };
     let instructions = include_str!("../docs/instructions.md")
+        .replace("{CATALOG_SUMMARY}", &catalog_summary)
         .replace("{DOCS_DIR}", &docs_dir.display().to_string())
         .replace("{SERVER_CATALOG}", &server_catalog)
+        .replace("{EXECUTE_CATALOG}", &execute_catalog)
         .replace("{UPSTREAM_INSTRUCTIONS}", &upstream)
         .replace("{ERRORS}", &error_section);
     instructions

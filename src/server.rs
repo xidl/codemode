@@ -18,6 +18,7 @@ pub struct AppState {
     pub instructions: String,
     pub errors: Vec<String>,
     pub execute_timeout_hard_ms: u64,
+    pub execute_catalog: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -59,7 +60,7 @@ impl ServerHandler for CodemodeServer {
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
         Ok(ListToolsResult::with_all_items(vec![
-            execute_tool_with_limit(self.state.execute_timeout_hard_ms),
+            execute_tool_with_limit(&self.state),
         ]))
     }
 
@@ -78,6 +79,22 @@ impl ServerHandler for CodemodeServer {
             ));
         }
         let arguments = request.arguments.unwrap_or_default();
+        if arguments.is_empty() {
+            return Ok(CallToolResult::success(vec![ContentBlock::text(
+                serde_json::to_string(&serde_json::json!({
+                    "catalog": self.state.execute_catalog,
+                    "examples": [
+                        "return mcp.<server>.<tool>(arg1, arg2);",
+                        "return mcp[\"server-name\"][\"tool.name\"](arg);"
+                    ],
+                    "hint": "Read the API docs directory for signatures; return values are plain JSON."
+                }))
+                .map_err(|err| {
+                    McpError::internal_error(format!("serialize catalog: {err}"), None)
+                })?,
+            )])
+            .into());
+        }
         let args: ExecuteArgs =
             serde_json::from_value(Value::Object(arguments)).map_err(|err| {
                 McpError::invalid_params(format!("invalid execute arguments: {err}"), None)
@@ -103,7 +120,7 @@ impl ServerHandler for CodemodeServer {
     }
 }
 
-fn execute_tool_with_limit(hard_limit_ms: u64) -> Tool {
+fn execute_tool_with_limit(state: &AppState) -> Tool {
     let schema = serde_json::json!({
         "type": "object",
         "properties": {
@@ -114,7 +131,7 @@ fn execute_tool_with_limit(hard_limit_ms: u64) -> Tool {
             "timeout_ms": {
                 "type": "integer",
                 "minimum": 100,
-                "maximum": hard_limit_ms,
+                "maximum": state.execute_timeout_hard_ms,
                 "default": 10000
             }
         },
@@ -130,7 +147,8 @@ fn execute_tool_with_limit(hard_limit_ms: u64) -> Tool {
              bracket access for invalid identifiers, for example \
              `mcp[\"server-name\"][\"tool.name\"](arg)`. Returns are plain JSON \
              values and tool failures throw. `timeout_ms` defaults to \
-             {DEFAULT_EXECUTE_TIMEOUT_MS} ms and cannot exceed {hard_limit_ms} ms."
+             {DEFAULT_EXECUTE_TIMEOUT_MS} ms and cannot exceed {} ms.",
+            state.execute_timeout_hard_ms
         ),
         schema
             .as_object()

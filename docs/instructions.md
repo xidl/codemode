@@ -1,7 +1,7 @@
 # xidl-codemode
 
-Code-mode gateway. Call `execute` with inline JavaScript.
-API docs directory: `{DOCS_DIR}`
+Code-mode gateway.
+Connected MCP servers ({CATALOG_SUMMARY}). Call `execute` with inline JavaScript. API docs directory: `{DOCS_DIR}`
 
 MCP APIs are injected as `mcp.<server>.<tool>(arg1, arg2, ...)`. Tool arguments
 are positional in IDL order; trailing optional arguments may be omitted, and an
@@ -15,6 +15,10 @@ with pure JavaScript promises.
 
 API docs: `{DOCS_DIR}/<server>/*.idl` (read with file tools; do not edit).
 Parameter order and types are defined in each IDL.
+
+## Execute catalog
+
+{EXECUTE_CATALOG}
 
 ## Available MCP servers
 
