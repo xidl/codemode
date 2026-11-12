@@ -85,7 +85,7 @@ state the workspace convention and call shape:
 
 ```bash
 rg --files .cache/codemode-*
-rg "@mcp_tool|string owner|int64 issue_number" .cache/codemode-*/github/*.idl
+rg "@rename|string owner|int64 issue_number" .cache/codemode-*/github/*.idl
 ```
 
 Parameter names, order, types, and optionality live only in the IDL files.

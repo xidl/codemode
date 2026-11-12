@@ -48,7 +48,6 @@ const DEMO_IDL: &str = r#"
 @mcp_server("demo")
 @mcp_namespace("default")
 interface DemoDefaultApi {
-    @mcp_tool("echo")
     @mcp_read_only
     any echo(
         string message,
@@ -134,7 +133,6 @@ fn generated_glue_uses_null_proto_params() {
 @mcp_server("demo")
 @mcp_namespace("default")
 interface DemoDefaultApi {
-    @mcp_tool("proto_tool")
     any proto_tool(string __proto__, string normal);
 };
 "#;
@@ -145,6 +143,24 @@ interface DemoDefaultApi {
     );
     assert!(glue.js.contains("__params[\"__proto__\"]"), "{glue:?}");
     glue::audit(&glue.js, &demo_catalog(&["proto_tool"])).unwrap();
+}
+
+#[test]
+fn operation_rename_maps_wire_tool_name() {
+    let idl = r#"
+#pragma xidlc package demo
+#pragma xidlc version 1.0.0
+@mcp_server("demo")
+@mcp_namespace("issues")
+interface DemoIssuesApi {
+    @rename("issues.get")
+    any issues_get(string message);
+};
+"#;
+    let glue = with_plugin_on_path(|| glue::generate("demo", idl)).unwrap();
+    assert!(glue.js.contains("tool: \"issues.get\""), "{glue:?}");
+    assert!(glue.js.contains("__ns[\"issues_get\"]"), "{glue:?}");
+    glue::audit(&glue.js, &demo_catalog(&["issues.get"])).unwrap();
 }
 
 #[test]
@@ -168,7 +184,6 @@ fn plugin_rejects_missing_server_annotation() {
 #pragma xidlc package demo
 #pragma xidlc version 1.0.0
 interface DemoDefaultApi {
-    @mcp_tool("echo")
     any echo(string message);
 };
 "#;
@@ -184,13 +199,13 @@ fn plugin_rejects_duplicate_js_names_across_namespaces() {
 @mcp_server("demo")
 @mcp_namespace("default")
 interface DemoDefaultApi {
-    @mcp_tool("first.echo")
+    @rename("first.echo")
     any echo(string message);
 };
 @mcp_server("demo")
 @mcp_namespace("other")
 interface DemoOtherApi {
-    @mcp_tool("second.echo")
+    @rename("second.echo")
     any echo(string message);
 };
 "#;

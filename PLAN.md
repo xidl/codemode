@@ -312,8 +312,8 @@ mcp.<serverNs>.<toolFn>(arg1, arg2, ...)
 
 - JSON key 是合法 IDL identifier 时原样保留（例如 `projectPath`）。
 - 非法 key 转合法 identifier，并加 `@rename("<original>")`。
-- tool 名合法时原样作为 IDL method 名；非法时 sanitize，原始 MCP tool 名写入
-  `@mcp_tool("...")`，由 manifest 插件读取。
+- tool 名合法时原样作为 IDL method 名；非法时 sanitize，原始 MCP tool 名在
+  method 名与 wire 名不同时写入 `@rename("...")`，由 glue 插件读取。
 - struct 名加 server/tool 前缀，避免跨 namespace 冲突。
 - 跨 namespace 共享类型放 `common` namespace。
 - 每个 server 生成一个内部 `bundle.idl`（`.codemode/.internal/`）用于
@@ -363,8 +363,8 @@ IDL 必须携带运行时映射所需的 annotation：
 
 - `@mcp_server("github")`：interface 级。
 - `@mcp_namespace("issues")`：interface 级。
-- `@mcp_tool("get_issue")`：operation 级，保存原始 MCP tool 名；即使 JS 名
-  与 MCP 名相同也必须写，避免插件靠命名推断。
+- `@rename("get_issue")`：operation 级，保存原始 MCP tool 名；仅 JS 名与
+  MCP 名不同时写，相同时保持原状。
 - `@mcp_read_only` / `@mcp_destructive` / `@mcp_idempotent` /
   `@mcp_open_world`：operation 级 flags。
 
@@ -743,8 +743,8 @@ serde_json = "1"
 - McpConnector（stdio + HTTP、分页 `tools/list`、并发、超时、部分失败）。
 - Schema -> xidl IR、namespace 分组、`agents.md`、manifest；文档落盘到
   workspace；manifest 由 external xidl plugin 从 IDL 生成。
-- IDL 生成 `@mcp_server` / `@mcp_namespace` / `@mcp_tool` / flags
-  annotation；manifest 插件读取 HIR 生成映射。
+- IDL 生成 `@mcp_server` / `@mcp_namespace` / `@rename` / flags
+  annotation；glue 插件读取 HIR 生成映射。
 - manifest 与 `tools/list` catalog 交叉校验。
 - CLI：`generate`（写 workspace）、`servers`、`doctor`、`bug-report`。
 - 快照测试：codegraph、agent-browser、边界 schema。
