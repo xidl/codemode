@@ -29,6 +29,12 @@ in `path`.
 filesystem access. Do not use `type="file"` just to inspect a file; it executes
 the file as JavaScript. Paths must be inside the allowed roots (default: the
 current workspace). Prefer relative paths for workspace files.
+
+Each `execute` creates a run directory. The result includes `run.dir`,
+`run.log`, and `run.metrics` as absolute paths. Read these files only when you
+need details: timeout diagnosis, per-tool-call timing, arguments/result
+summaries, or console logs. The files are JSONL; prefer `rg`/`tail`. Do not
+inline large log contents into your final answer.
 Tool calls are synchronous and serial; `await` is only syntax-compatible with
 pure JavaScript promises.
 Use `search_tools` before calling when you need to find a tool by intent.

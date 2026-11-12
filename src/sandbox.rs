@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::catalog::{namespace_for, snake_case, ServerCatalog};
+use crate::runlog::{RunLogger, RunPaths};
 
 pub trait ToolCaller: Send + Sync {
     fn call_tool(
@@ -108,6 +109,56 @@ fn content_text(value: &Value) -> String {
         .unwrap_or_default()
 }
 
+fn value_kind(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
+struct ToolCallStats<'a> {
+    index: usize,
+    server: &'a str,
+    tool: &'a str,
+    duration_ms: u64,
+    request_bytes: usize,
+}
+
+fn log_call_error(
+    run_logger: &RunLogger,
+    stats: &ToolCallStats<'_>,
+    status: &'static str,
+    message: Option<&str>,
+) {
+    run_logger.log_event(serde_json::json!({
+        "event": "tool_call.end",
+        "index": stats.index,
+        "server": stats.server,
+        "tool": stats.tool,
+        "duration_ms": stats.duration_ms,
+        "ok": false,
+        "status": status,
+        "error": message,
+        "result_bytes": 0,
+    }));
+    run_logger.log_metric(serde_json::json!({
+        "metric": "tool_call",
+        "index": stats.index,
+        "server": stats.server,
+        "tool": stats.tool,
+        "duration_ms": stats.duration_ms,
+        "ok": false,
+        "status": status,
+        "request_bytes": stats.request_bytes,
+        "result_bytes": 0,
+        "result_kind": "error",
+    }));
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolCallFailureKind {
     ToolTimeout,
@@ -168,6 +219,8 @@ pub struct ExecuteOutcome {
     pub timeout_ms: u64,
     pub truncated: bool,
     pub error: Option<ExecuteError>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<RunPaths>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -307,11 +360,48 @@ pub fn execute(
     code: &str,
     timeout: Duration,
 ) -> ExecuteOutcome {
+    execute_with_run_logger(
+        bridge,
+        servers,
+        catalogs,
+        code,
+        timeout,
+        RunSource {
+            kind: "code",
+            path: None,
+        },
+        &Arc::new(RunLogger::disabled()),
+    )
+}
+
+#[derive(Debug, Clone)]
+pub struct RunSource {
+    pub kind: &'static str,
+    pub path: Option<String>,
+}
+
+pub fn execute_with_run_logger(
+    bridge: &Arc<dyn ToolCaller>,
+    servers: &[RuntimeServer],
+    catalogs: &[ServerCatalog],
+    code: &str,
+    timeout: Duration,
+    source: RunSource,
+    run_logger: &Arc<RunLogger>,
+) -> ExecuteOutcome {
     let started = Instant::now();
     let deadline = started + timeout;
     let timeout_ms = timeout.as_millis() as u64;
+    let run_paths = run_logger.paths().cloned();
+    run_logger.log_event(serde_json::json!({
+        "event": "execute.start",
+        "source": source.kind,
+        "path": source.path,
+        "code_bytes": code.len(),
+        "timeout_ms": timeout_ms,
+    }));
     if code.len() > MAX_CODE_BYTES {
-        return failure(
+        let outcome = failure(
             "limit_exceeded",
             "code exceeds 256 KiB",
             started,
@@ -319,12 +409,14 @@ pub fn execute(
             Vec::new(),
             Vec::new(),
         );
+        return finish_run(run_logger, outcome, started);
     }
 
     let logs = Arc::new(Mutex::new(Vec::<LogEntry>::new()));
     let traces = Arc::new(Mutex::new(Vec::<ToolCallTrace>::new()));
     let calls = Arc::new(AtomicUsize::new(0));
     let last_timeout = Arc::new(Mutex::new(None::<String>));
+    let pending: Arc<Mutex<Option<Value>>> = Arc::new(Mutex::new(None));
 
     let result = run_js(RunContext {
         bridge: bridge.clone(),
@@ -336,6 +428,8 @@ pub fn execute(
         traces: traces.clone(),
         calls: calls.clone(),
         last_timeout: last_timeout.clone(),
+        run_logger: run_logger.clone(),
+        pending: pending.clone(),
     });
     let duration_ms = started.elapsed().as_millis() as u64;
     let mut logs = logs.lock().expect("sandbox log mutex poisoned").clone();
@@ -343,7 +437,7 @@ pub fn execute(
     if logs.len() > MAX_LOGS {
         logs.truncate(MAX_LOGS);
     }
-    match result {
+    let outcome = match result {
         Ok(outcome) => ExecuteOutcome {
             ok: outcome.ok,
             value: outcome.value,
@@ -353,6 +447,7 @@ pub fn execute(
             timeout_ms,
             truncated: false,
             error: outcome.error,
+            run: run_paths.clone(),
         },
         Err(error) => {
             let lower = error.0.to_ascii_lowercase();
@@ -370,6 +465,19 @@ pub fn execute(
             } else {
                 "js_error".to_string()
             };
+            let phase = match code.as_str() {
+                "tool_timeout" => "tool_call",
+                _ => "javascript",
+            };
+            if matches!(code.as_str(), "execute_timeout" | "tool_timeout") {
+                run_logger.log_event(serde_json::json!({
+                    "event": "timeout",
+                    "phase": phase,
+                    "pending_call": pending.lock().expect("sandbox pending mutex poisoned").clone(),
+                    "last_log": logs.last(),
+                    "error_stack": error.1,
+                }));
+            }
             ExecuteOutcome {
                 ok: false,
                 value: Value::Null,
@@ -383,9 +491,48 @@ pub fn execute(
                     message: error.0,
                     stack: error.1,
                 }),
+                run: run_paths.clone(),
             }
         }
-    }
+    };
+    finish_run(run_logger, outcome, started)
+}
+
+fn finish_run(
+    run_logger: &Arc<RunLogger>,
+    outcome: ExecuteOutcome,
+    started: Instant,
+) -> ExecuteOutcome {
+    let duration_ms = outcome.duration_ms;
+    let error_code = outcome.error.as_ref().map(|error| error.code.clone());
+    let tool_call_ms: u64 = outcome.tool_calls.iter().map(|call| call.duration_ms).sum();
+    let call_count = outcome.tool_calls.len();
+    let error_count = outcome.tool_calls.iter().filter(|call| !call.ok).count();
+    run_logger.log_event(serde_json::json!({
+        "event": "execute.end",
+        "ok": outcome.ok,
+        "duration_ms": duration_ms,
+        "error_code": error_code,
+        "stack": outcome.error.as_ref().and_then(|error| error.stack.clone()),
+    }));
+    run_logger.log_metric(serde_json::json!({
+        "metric": "execute",
+        "duration_ms": duration_ms,
+        "timeout_ms": outcome.timeout_ms,
+        "tool_call_ms": tool_call_ms,
+        "call_count": call_count,
+        "error_count": error_count,
+        "ok": outcome.ok,
+        "error_code": error_code,
+    }));
+    run_logger.write_summary(&serde_json::json!({
+        "ok": outcome.ok,
+        "error_code": error_code,
+        "duration_ms": duration_ms,
+        "tool_call_count": call_count,
+        "elapsed_until_summary_ms": started.elapsed().as_millis() as u64,
+    }));
+    outcome
 }
 
 struct RunContext {
@@ -398,6 +545,8 @@ struct RunContext {
     traces: Arc<Mutex<Vec<ToolCallTrace>>>,
     calls: Arc<AtomicUsize>,
     last_timeout: Arc<Mutex<Option<String>>>,
+    run_logger: Arc<RunLogger>,
+    pending: Arc<Mutex<Option<Value>>>,
 }
 
 fn host_error(message: impl Into<String>) -> rquickjs::Error {
@@ -415,6 +564,8 @@ fn run_js(context: RunContext) -> std::result::Result<JsOutcome, (String, Option
         traces,
         calls,
         last_timeout,
+        run_logger,
+        pending,
     } = context;
     let runtime = Runtime::new().map_err(|err| (format!("create quickjs runtime: {err}"), None))?;
     runtime.set_memory_limit(128 * 1024 * 1024);
@@ -427,6 +578,7 @@ fn run_js(context: RunContext) -> std::result::Result<JsOutcome, (String, Option
         let globals = ctx.globals();
 
         let log_sink = logs.clone();
+        let log_run = run_logger.clone();
         let log_fn = Function::new(ctx.clone(), move |level: String, message: String| {
             let mut logs = log_sink.lock().expect("sandbox log mutex poisoned");
             if logs.len() >= MAX_LOGS {
@@ -436,7 +588,15 @@ fn run_js(context: RunContext) -> std::result::Result<JsOutcome, (String, Option
             if used + message.len() > MAX_LOG_BYTES {
                 return;
             }
-            logs.push(LogEntry { level, message });
+            logs.push(LogEntry {
+                level: level.clone(),
+                message: message.clone(),
+            });
+            log_run.log_event(serde_json::json!({
+                "event": "log",
+                "level": level,
+                "message": message,
+            }));
         })
         .map_err(|err| (format!("create log sink: {err}"), None))?;
         globals
@@ -451,6 +611,8 @@ fn run_js(context: RunContext) -> std::result::Result<JsOutcome, (String, Option
         let call_bridge = bridge.clone();
         let call_traces = traces.clone();
         let call_last_timeout = last_timeout.clone();
+        let call_run = run_logger.clone();
+        let call_pending = pending.clone();
         let call_fn = Function::new(
             ctx.clone(),
             move |call: String| -> rquickjs::Result<String> {
@@ -473,6 +635,24 @@ fn run_js(context: RunContext) -> std::result::Result<JsOutcome, (String, Option
                 if !incoming.params.is_object() {
                     return Err(host_error("call params must be an object"));
                 }
+                let index = used;
+                let args_preview = crate::runlog::preview(&incoming.params);
+                let request_bytes = serde_json::to_string(&incoming.params)
+                    .map(|text| text.len())
+                    .unwrap_or(0);
+                call_run.log_event(serde_json::json!({
+                    "event": "tool_call.start",
+                    "index": index,
+                    "server": incoming.server.clone(),
+                    "tool": incoming.tool.clone(),
+                    "args": args_preview,
+                }));
+                *call_pending.lock().expect("sandbox pending mutex poisoned") =
+                    Some(serde_json::json!({
+                        "index": index,
+                        "server": incoming.server.clone(),
+                        "tool": incoming.tool.clone(),
+                    }));
                 let remaining = deadline.saturating_duration_since(now);
                 let per_call = remaining.min(TOOL_CALL_TIMEOUT);
                 let call_started = Instant::now();
@@ -493,23 +673,86 @@ fn run_js(context: RunContext) -> std::result::Result<JsOutcome, (String, Option
                         ok: result.is_ok(),
                         error: result.as_ref().err().map(|err| err.to_string()),
                     });
-                match result {
-                    Ok(value) => match normalize_tool_result(&value) {
-                        Ok(value) => serde_json::to_string(&value.into_json())
-                            .map_err(|err| host_error(format!("serialize tool result: {err}"))),
-                        Err(message) => Err(host_error(message)),
+                let end_event = match &result {
+                    Ok(value) => match normalize_tool_result(value) {
+                        Ok(normalized) => {
+                            let value = normalized.into_json();
+                            let result_bytes = serde_json::to_string(&value)
+                                .map(|text| text.len())
+                                .unwrap_or(0);
+                            call_run.log_event(serde_json::json!({
+                                "event": "tool_call.end",
+                                "index": index,
+                                "server": incoming.server.clone(),
+                                "tool": incoming.tool.clone(),
+                                "duration_ms": duration_ms,
+                                "ok": true,
+                                "status": "ok",
+                                "result": crate::runlog::preview(&value),
+                                "result_bytes": result_bytes,
+                            }));
+                            call_run.log_metric(serde_json::json!({
+                                "metric": "tool_call",
+                                "index": index,
+                                "server": incoming.server.clone(),
+                                "tool": incoming.tool.clone(),
+                                "duration_ms": duration_ms,
+                                "ok": true,
+                                "status": "ok",
+                                "request_bytes": request_bytes,
+                                "result_bytes": result_bytes,
+                                "result_kind": value_kind(&value),
+                            }));
+                            serde_json::to_string(&value)
+                                .map_err(|err| host_error(format!("serialize tool result: {err}")))
+                        }
+                        Err(message) => {
+                            log_call_error(
+                                &call_run,
+                                &ToolCallStats {
+                                    index,
+                                    server: &incoming.server,
+                                    tool: &incoming.tool,
+                                    duration_ms,
+                                    request_bytes,
+                                },
+                                "error",
+                                Some(&message),
+                            );
+                            Err(host_error(message))
+                        }
                     },
                     Err(failure) => {
+                        let status = if failure.kind == ToolCallFailureKind::ToolTimeout {
+                            "timed_out"
+                        } else {
+                            "error"
+                        };
+                        log_call_error(
+                            &call_run,
+                            &ToolCallStats {
+                                index,
+                                server: &incoming.server,
+                                tool: &incoming.tool,
+                                duration_ms,
+                                request_bytes,
+                            },
+                            status,
+                            Some(&failure.message),
+                        );
                         if failure.kind == ToolCallFailureKind::ToolTimeout {
                             let message = format!("tool_timeout: {}", failure.message);
                             *call_last_timeout
                                 .lock()
                                 .expect("sandbox timeout mutex poisoned") = Some(message.clone());
-                            return Err(host_error(message));
+                            Err(host_error(message))
+                        } else {
+                            Err(host_error(failure.message.clone()))
                         }
-                        Err(host_error(failure.message))
                     }
-                }
+                };
+                *call_pending.lock().expect("sandbox pending mutex poisoned") = None;
+                end_event
             },
         )
         .map_err(|err| (format!("create callTool: {err}"), None))?;
@@ -689,6 +932,7 @@ fn failure(
             message: message.to_string(),
             stack: None,
         }),
+        run: None,
     }
 }
 

@@ -4,6 +4,7 @@ pub mod config;
 pub mod error;
 pub mod glue;
 pub mod idl;
+pub mod runlog;
 pub mod sandbox;
 pub mod server;
 pub mod workspace;
@@ -72,6 +73,8 @@ pub fn build(options: &BuildOptions) -> Result<BuiltApp> {
     let mut connected_servers = Vec::new();
     let mut tool_index = Vec::new();
     let mut kept = Vec::new();
+
+    let run_log_root = prepare_run_log_root(loaded.run_log_dir.as_deref());
     for (spec, discovered) in discovered {
         match discovered {
             Ok(catalog) => {
@@ -172,6 +175,7 @@ pub fn build(options: &BuildOptions) -> Result<BuiltApp> {
             execute_timeout_hard_ms: loaded.execute_timeout_hard_ms,
             execute_file_roots: loaded.execute_file_roots,
             cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            run_log_root,
         }),
         docs_dir,
         docs_guard: docs.guard,
@@ -317,4 +321,31 @@ pub fn build_instructions(docs_dir: &Path, server_names: &[String], errors: &[St
         .replace("{DOCS_DIR}", &docs_dir.display().to_string())
         .replace("{ERRORS}", &error_section);
     instructions
+}
+
+/// Default run log root is a persistent `.cache/codemode-log-<random>`
+/// directory under the workspace; `runLogDir` overrides it. Startup cleanup
+/// of stale `codemode-*` runs removes old roots, and each root prunes its own
+/// runs during execution.
+fn prepare_run_log_root(override_dir: Option<&std::path::Path>) -> Option<PathBuf> {
+    let root = match override_dir {
+        Some(dir) => dir.to_path_buf(),
+        None => {
+            let cache = std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(".cache");
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or_default();
+            cache.join(format!("codemode-log-{nanos:x}"))
+        }
+    };
+    match std::fs::create_dir_all(&root) {
+        Ok(()) => root.canonicalize().ok().or(Some(root)),
+        Err(err) => {
+            tracing::warn!("run log dir {} unavailable: {err}", root.display());
+            None
+        }
+    }
 }

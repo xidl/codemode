@@ -16,6 +16,7 @@ fn outcome(ok: bool, error: Option<ExecuteError>) -> ExecuteOutcome {
         timeout_ms: 5000,
         truncated: false,
         error,
+        run: None,
     }
 }
 
