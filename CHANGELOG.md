@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/xidl/codemode/compare/v0.4.0...v0.4.1) (2026-11-12)
+
+
+### Bug Fixes
+
+* package glue binary in release workflow ([1c4a7cd](https://github.com/xidl/codemode/commit/1c4a7cd4fc094994fbd5bcc5d41cf24d734c0969))
+
 ## [0.4.0](https://github.com/xidl/codemode/compare/v0.3.0...v0.4.0) (2026-11-12)
 
 
