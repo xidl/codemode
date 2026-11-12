@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.7.0](https://github.com/xidl/codemode/compare/v0.6.0...v0.7.0) (2026-11-12)
+
+
+### ⚠ BREAKING CHANGES
+
+* use single object arguments with snake_case names
+* use operation @rename for wire tool names
+
+### Features
+
+* generate output types from MCP output schemas ([7dff7ca](https://github.com/xidl/codemode/commit/7dff7cab184039b9bc0c9ce03f53acd94fd1dc51)), closes [#17](https://github.com/xidl/codemode/issues/17)
+* persist run logs and metrics for execute ([ac9371d](https://github.com/xidl/codemode/commit/ac9371d0f2b4732419091ba40a49814579b67c09)), closes [#22](https://github.com/xidl/codemode/issues/22)
+* support file-based execute sources ([3c482f2](https://github.com/xidl/codemode/commit/3c482f25397a3c7983acbd0baeaff1a78f6d342b)), closes [#21](https://github.com/xidl/codemode/issues/21)
+* unwrap JSON text results and return structuredContent ([1bcac21](https://github.com/xidl/codemode/commit/1bcac21a76fd36258caab8dd4da8ddb5f3c408b9)), closes [#20](https://github.com/xidl/codemode/issues/20)
+* use single object arguments with snake_case names ([13ac511](https://github.com/xidl/codemode/commit/13ac511fc41e79ecf06a118f7ccf497616e79869)), closes [#19](https://github.com/xidl/codemode/issues/19)
+
+
+### Code Refactoring
+
+* use operation [@rename](https://github.com/rename) for wire tool names ([50db46b](https://github.com/xidl/codemode/commit/50db46b53887bc25d8ed50b691bb97bf0f08ba0b)), closes [#18](https://github.com/xidl/codemode/issues/18)
+
 ## [0.6.0](https://github.com/xidl/codemode/compare/v0.5.0...v0.6.0) (2026-11-12)
 
 
