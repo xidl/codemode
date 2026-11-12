@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/xidl/codemode/compare/v0.5.0...v0.6.0) (2026-11-12)
+
+
+### Features
+
+* replace mcp bindings with tools ([57c7bd4](https://github.com/xidl/codemode/commit/57c7bd48f31eadbe065471b94e1dd6535e3e8509))
+
 ## [0.5.0](https://github.com/xidl/codemode/compare/v0.4.1...v0.5.0) (2026-11-12)
 
 
