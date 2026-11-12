@@ -319,10 +319,15 @@ QuickJS 里的 tool 函数是同步函数。glue 通过注入的 `host.callTool`
 | --- | --- |
 | `isError: true` | text content 作为 JavaScript Error 抛出 |
 | 有 `structuredContent` | 直接返回该 JSON 值 |
-| 单个 text block | 字符串 |
+| 单个 text block，trim 后以 `{` 或 `[` 开头且是合法 JSON | 该 JSON 值（自动解包） |
+| 其他单个 text block | 字符串 |
 | 单个 image/audio/resource block | 对应 codemode 值对象 |
-| 多个 content block | 归一化后的数组 |
+| 多个 content block | 归一化后的数组（每个 text block 按同一规则解包） |
 | 空 content | `null` |
+
+JSON text 解包是启发式：只处理 object/array，`"42"`、`"true"`、
+`"\"hello\""` 和解析失败的文本保持字符串。需要原文时可从
+`JSON.stringify` 还原。
 
 ### D12：配置格式
 
@@ -735,8 +740,9 @@ execute 剩余 deadline。这避免 hung upstream 阻塞到 QuickJS interrupt �
 
 ### 7.4 输出
 
-`execute` 返回一个 MCP text content block，内容是 `ExecuteOutcome` 的 JSON
-字符串：
+`execute` 返回 MCP 结果：完整 `ExecuteOutcome` 放在
+`structuredContent`（不再有 JSON 字符串套 JSON 的双重编码），text content
+只保留一行摘要（ok/error、耗时、tool call 数），供只读 text 的客户端使用：
 
 ```json
 {
@@ -750,6 +756,9 @@ execute 剩余 deadline。这避免 hung upstream 阻塞到 QuickJS interrupt �
   "error": null
 }
 ```
+
+`execute` 的 tool `outputSchema` 由 `ExecuteOutcome` 通过 schemars 生成，
+`structuredContent` 形状与之一致。
 
 `truncated` 目前始终是 `false`；结果超限时直接返回 `limit_exceeded`，
 不会截断后继续。

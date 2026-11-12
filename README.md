@@ -149,10 +149,11 @@ return result;
 ```
 
 Tool calls return normal JSON values: structured content when present, a single
-text block as a string, multiple blocks as an array, and empty content as null.
-Tool failures throw JavaScript errors. Each tool takes a single object
-argument; server, tool, and parameter names are snake_case, optional fields may
-be omitted, explicit null values pass through, and unknown fields are rejected.
+text block that is itself JSON unwrapped into that value, other text blocks as
+strings, multiple blocks as an array, and empty content as null. Tool failures
+throw JavaScript errors. Each tool takes a single object argument; server,
+tool, and parameter names are snake_case, optional fields may be omitted,
+explicit null values pass through, and unknown fields are rejected.
 
 When an upstream tool declares an `outputSchema`, the generated IDL and
 `glue.d.ts` include a named output struct and the operation returns that type

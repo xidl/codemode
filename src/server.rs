@@ -157,10 +157,31 @@ impl ServerHandler for CodemodeServer {
         })
         .await
         .map_err(|err| McpError::internal_error(format!("sandbox task failed: {err}"), None))?;
-        let text = serde_json::to_string(&outcome)
-            .map_err(|err| McpError::internal_error(format!("serialize result: {err}"), None))?;
-        Ok(CallToolResult::success(vec![ContentBlock::text(text)]).into())
+        Ok(execute_call_result(&outcome).into())
     }
+}
+
+/// Wrap the sandbox outcome as an MCP result: the full outcome rides in
+/// `structuredContent` (no double-encoded JSON), while the text content is a
+/// short summary for clients that only read text blocks.
+pub fn execute_call_result(outcome: &sandbox::ExecuteOutcome) -> CallToolResult {
+    let summary = match &outcome.error {
+        Some(error) => {
+            let message: String = error.message.chars().take(500).collect();
+            format!(
+                "execute failed: {} ({}, {} ms); full result is in structuredContent",
+                message, error.code, outcome.duration_ms
+            )
+        }
+        None => format!(
+            "execute ok ({} ms, {} tool calls); full result is in structuredContent",
+            outcome.duration_ms,
+            outcome.tool_calls.len()
+        ),
+    };
+    let mut result = CallToolResult::success(vec![ContentBlock::text(summary)]);
+    result.structured_content = Some(serde_json::to_value(outcome).unwrap_or(Value::Null));
+    result
 }
 
 fn execute_tool_with_limit(state: &AppState) -> Tool {
@@ -198,6 +219,7 @@ fn execute_tool_with_limit(state: &AppState) -> Tool {
             .cloned()
             .expect("execute tool schema must be a JSON object"),
     )
+    .with_output_schema::<sandbox::ExecuteOutcome>()
 }
 
 fn search_tools_tool() -> Tool {

@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use rquickjs::{Context, Function, Object, Promise, Runtime, Value as JsValue};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -74,13 +75,19 @@ pub fn normalize_tool_result(value: &Value) -> std::result::Result<NormalizedToo
 
 fn normalize_content_block(block: &Value) -> NormalizedToolValue {
     match block.get("type").and_then(Value::as_str) {
-        Some("text") => NormalizedToolValue::Text(
-            block
+        Some("text") => {
+            let text = block
                 .get("text")
                 .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-        ),
+                .unwrap_or_default();
+            let trimmed = text.trim();
+            if trimmed.starts_with('{') || trimmed.starts_with('[') {
+                if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+                    return NormalizedToolValue::Json(value);
+                }
+            }
+            NormalizedToolValue::Text(text.to_string())
+        }
         Some("image" | "audio" | "resource") => NormalizedToolValue::Json(block.clone()),
         _ => NormalizedToolValue::Json(block.clone()),
     }
@@ -129,13 +136,13 @@ pub struct RuntimeServer {
     pub glue: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct LogEntry {
     pub level: String,
     pub message: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ToolCallTrace {
     pub server: String,
     pub tool: String,
@@ -144,14 +151,14 @@ pub struct ToolCallTrace {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ExecuteError {
     pub code: String,
     pub message: String,
     pub stack: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ExecuteOutcome {
     pub ok: bool,
     pub value: Value,

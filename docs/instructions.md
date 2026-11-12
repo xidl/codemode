@@ -13,7 +13,9 @@ Required fields must be present and are rejected when `undefined`; optional
 fields may be omitted; explicit `null` values pass through; unknown fields
 are rejected so typos fail fast.
 
-Calls return normal JSON values directly; tool failures throw JavaScript errors.
+Calls return normal JSON values directly: upstream `structuredContent` wins,
+and a text block that is itself JSON (object/array) is unwrapped automatically,
+so you rarely need `JSON.parse`. Tool failures throw JavaScript errors.
 Tool calls are synchronous and serial; `await` is only syntax-compatible with
 pure JavaScript promises.
 Use `search_tools` before calling when you need to find a tool by intent.
