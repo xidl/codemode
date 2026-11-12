@@ -46,11 +46,10 @@ pub fn generate(catalog: &ServerCatalog) -> GeneratedServer {
         for tool in &tools {
             builder.add_tool(tool);
         }
-        let body = builder.finish(false);
-        let body_with_result = builder.finish(true);
+        let body = builder.finish();
         let idl = format!(
             "#pragma xidlc package {}\n#pragma xidlc version 1.0.0\n\n{}",
-            catalog.name, body_with_result
+            catalog.name, body
         );
         bundle_parts.push(body);
         namespaces.push(GeneratedNamespace {
@@ -61,8 +60,7 @@ pub fn generate(catalog: &ServerCatalog) -> GeneratedServer {
 
     let bundle = format!(
         "#pragma xidlc package {}\n#pragma xidlc version 1.0.0\n\n\
-         /// Raw MCP tools/call result.\n\
-         struct McpToolResult {{\n    boolean isError;\n    sequence<any> content;\n    any structuredContent;\n}};\n\n{}",
+         {}",
         catalog.name,
         bundle_parts.join("\n")
     );
@@ -83,7 +81,6 @@ struct IdlBuilder {
     structs: Vec<String>,
     used: HashSet<String>,
     methods: Vec<String>,
-    result_struct: bool,
 }
 
 impl IdlBuilder {
@@ -96,13 +93,11 @@ impl IdlBuilder {
             structs: Vec::new(),
             used: HashSet::new(),
             methods: Vec::new(),
-            result_struct: false,
         }
     }
 
     fn add_tool(&mut self, tool: &ToolInfo) {
         let tool_pascal = pascal_case(&method_name(&tool.name));
-        self.result_struct = true;
         let method = method_name(&tool.name);
         let required: HashSet<&str> = tool
             .input_schema
@@ -169,17 +164,12 @@ impl IdlBuilder {
         }
         let docs = doc_comment(&tool.description);
         self.methods.push(format!(
-            "{docs}{annotations}    McpToolResult {method}({param_block});"
+            "{docs}{annotations}    any {method}({param_block});"
         ));
     }
 
-    fn finish(&self, include_result: bool) -> String {
+    fn finish(&self) -> String {
         let mut out = String::new();
-        if include_result && self.result_struct {
-            out.push_str(
-                "/// Raw MCP tools/call result.\nstruct McpToolResult {\n    boolean isError;\n    sequence<any> content;\n    any structuredContent;\n};\n\n",
-            );
-        }
         for item in &self.structs {
             out.push_str(item);
             out.push_str("\n\n");

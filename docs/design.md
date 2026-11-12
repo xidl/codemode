@@ -155,7 +155,7 @@ optional 属性。这样下游 MCP context 不会被 N 个上游 tool schema 占
 
 ```json
 {
-  "code": "return unwrap(mcp.github.get_issue('xidl', 'xidl', 361));",
+  "code": "return mcp.github.get_issue('xidl', 'xidl', 361);",
   "timeout_ms": 10000
 }
 ```
@@ -254,7 +254,7 @@ MCP tool 名本身是扁平的。当前分组规则按顺序执行：
 
 ```js
 const issue = mcp.github.get_issue("xidl", "xidl", 361);
-return unwrap(issue);
+return issue;
 ```
 
 参数顺序来自生成的 IDL，而 IDL 的参数顺序来自上游
@@ -294,26 +294,18 @@ QuickJS 里的 tool 函数是同步函数。glue 通过注入的 `host.callTool`
 - `Promise.all` 在纯 JS 值上可用，但不会带来真实上游并发；
 - 所有上游 tool call 在单个 bridge 线程上串行执行。
 
-### D11：原始 `CallToolResult` 与 `unwrap`
+### D11：归一化的 codemode 返回值
 
-`mcp.<server>.<tool>(...)` 返回上游 `tools/call` 的原始 JSON 结果：
+`mcp.<server>.<tool>(...)` 只返回普通 JS/JSON 值：
 
-```ts
-{
-  content: Array<{ type: string; text?: string; ... }>;
-  structuredContent?: unknown;
-  isError?: boolean;
-}
-```
-
-`unwrap(result)`：
-
-- `isError === true`：把 text content 拼成错误信息并抛出；
-- 有 `structuredContent`：返回它；
-- 否则返回整个 `content` 数组。
-
-不直接返回 `structuredContent` 是为了保留多 content block、图片、资源引用
-和错误标记。
+| 上游结果 | codemode 返回值 |
+| --- | --- |
+| `isError: true` | text content 作为 JavaScript Error 抛出 |
+| 有 `structuredContent` | 直接返回该 JSON 值 |
+| 单个 text block | 字符串 |
+| 单个 image/audio/resource block | 对应 codemode 值对象 |
+| 多个 content block | 归一化后的数组 |
+| 空 content | `null` |
 
 ### D12：配置格式
 
@@ -363,7 +355,7 @@ QuickJS 只提供：
 
 - 标准 ECMAScript 内置对象；
 - `mcp`；
-- `unwrap`；
+- tool 调用直接返回普通 JS/JSON 值；
 - `console.log/info/warn/error`。
 
 没有 `fetch`、`process`、`fs`、`child_process`、`Deno` 或 `Bun`。
@@ -374,9 +366,8 @@ QuickJS 只提供：
 
 ### D14：JSON Schema 映射范围
 
-当前只生成输入参数类型，所有 operation 的返回类型统一是
-`McpToolResult`。`outputSchema` 会被 catalog 捕获，但不会生成专用输出
-struct。
+当前只生成输入参数类型，所有 operation 的返回类型统一是 `any`。
+`outputSchema` 会被 catalog 捕获，但不会生成专用输出 struct。
 
 | JSON Schema | 生成的 IDL |
 | --- | --- |
@@ -428,7 +419,7 @@ namespace 对象会被冻结。这样即使 tool 名包含 `.`、`-` 或其他�
 codemode 的 server instructions 包含：
 
 1. workspace 绝对路径；
-2. `mcp.<server>.<tool>(arg1, arg2, ...)` 和 `unwrap` 的调用方式；
+2. `mcp.<server>.<tool>(arg1, arg2, ...)` 和普通 JSON 返回值的调用方式；
 3. IDL 的 glob 路径；
 4. 标记为 untrusted 的上游 instructions；
 5. 启动时失败的 server 列表。
@@ -540,7 +531,6 @@ struct ToolInfo {
 - `#pragma xidlc package <server>`；
 - `#pragma xidlc version 1.0.0`；
 - 该 namespace 用到的嵌套 struct；
-- 一个 `McpToolResult`；
 - 一个带 `@mcp_server` / `@mcp_namespace` 的 interface。
 
 示例：
@@ -549,19 +539,13 @@ struct ToolInfo {
 #pragma xidlc package github
 #pragma xidlc version 1.0.0
 
-struct McpToolResult {
-    boolean isError;
-    sequence<any> content;
-    any structuredContent;
-};
-
 @mcp_server("github")
 @mcp_namespace("issues")
 interface GithubIssuesApi {
     /// Get a single issue.
     @mcp_tool("get_issue")
     @mcp_read_only
-    McpToolResult get_issue(
+    any get_issue(
         /// Repository owner.
         string owner,
         /// Repository name.

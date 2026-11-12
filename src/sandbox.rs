@@ -16,6 +16,89 @@ pub trait ToolCaller: Send + Sync {
     ) -> std::result::Result<Value, ToolCallFailure>;
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NormalizedToolValue {
+    Null,
+    Text(String),
+    Json(Value),
+    Blocks(Vec<Value>),
+}
+
+impl NormalizedToolValue {
+    fn into_json(self) -> Value {
+        match self {
+            NormalizedToolValue::Null => Value::Null,
+            NormalizedToolValue::Text(text) => Value::String(text),
+            NormalizedToolValue::Json(value) => value,
+            NormalizedToolValue::Blocks(blocks) => Value::Array(blocks),
+        }
+    }
+}
+
+pub fn normalize_tool_result(value: &Value) -> std::result::Result<NormalizedToolValue, String> {
+    let is_error = value
+        .get("isError")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let structured = value
+        .get("structuredContent")
+        .filter(|value| !value.is_null());
+    if is_error {
+        let mut text = content_text(value);
+        if text.trim().is_empty() {
+            text = "tool returned isError".to_string();
+        }
+        return Err(text);
+    }
+    if let Some(structured) = structured {
+        return Ok(NormalizedToolValue::Json(structured.clone()));
+    }
+    let Some(content) = value.get("content").and_then(Value::as_array) else {
+        return Ok(NormalizedToolValue::Null);
+    };
+    if content.is_empty() {
+        return Ok(NormalizedToolValue::Null);
+    }
+    if content.len() == 1 {
+        return Ok(normalize_content_block(&content[0]));
+    }
+    Ok(NormalizedToolValue::Blocks(
+        content
+            .iter()
+            .map(|block| normalize_content_block(block).into_json())
+            .collect(),
+    ))
+}
+
+fn normalize_content_block(block: &Value) -> NormalizedToolValue {
+    match block.get("type").and_then(Value::as_str) {
+        Some("text") => NormalizedToolValue::Text(
+            block
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+        ),
+        Some("image" | "audio" | "resource") => NormalizedToolValue::Json(block.clone()),
+        _ => NormalizedToolValue::Json(block.clone()),
+    }
+}
+
+fn content_text(value: &Value) -> String {
+    value
+        .get("content")
+        .and_then(Value::as_array)
+        .map(|blocks| {
+            blocks
+                .iter()
+                .filter(|block| block.get("type").and_then(Value::as_str) == Some("text"))
+                .filter_map(|block| block.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolCallFailureKind {
     ToolTimeout,
@@ -284,11 +367,11 @@ fn run_js(context: RunContext) -> std::result::Result<JsOutcome, (String, Option
                         error: result.as_ref().err().map(|err| err.to_string()),
                     });
                 match result {
-                    Ok(value) => {
-                        let json = serde_json::to_string(&value)
-                            .map_err(|err| host_error(format!("serialize tool result: {err}")))?;
-                        Ok(json)
-                    }
+                    Ok(value) => match normalize_tool_result(&value) {
+                        Ok(value) => serde_json::to_string(&value.into_json())
+                            .map_err(|err| host_error(format!("serialize tool result: {err}"))),
+                        Err(message) => Err(host_error(message)),
+                    },
                     Err(failure) => {
                         if failure.kind == ToolCallFailureKind::ToolTimeout {
                             let message = format!("tool_timeout: {}", failure.message);
@@ -406,16 +489,6 @@ fn failure(
 const BOOTSTRAP: &str = r#"
 (function() {
   const __xidl_log_fn = globalThis.__xidl_log;
-  globalThis.unwrap = function(result) {
-    if (result && result.isError) {
-      const text = (result.content || []).filter((item) => item.type === "text").map((item) => item.text).join("\n");
-      throw new Error(text || "tool returned isError");
-    }
-    if (result && Object.prototype.hasOwnProperty.call(result, "structuredContent") && result.structuredContent !== undefined) {
-      return result.structuredContent;
-    }
-    return result && result.content;
-  };
   const __console = Object.create(null);
   for (const __level of ["log", "info", "warn", "error"]) {
     __console[__level] = function(...args) {

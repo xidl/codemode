@@ -142,11 +142,12 @@ const result = mcp.codegraph.codegraph_explore(
   null,
   "/path/to/xidl",
 );
-return unwrap(result);
+return result;
 ```
 
-`unwrap` throws on `isError`, returns `structuredContent` when present, and
-otherwise returns the content blocks. Tool arguments are positional and follow
+Tool calls return normal JSON values: structured content when present, a single
+text block as a string, multiple blocks as an array, and empty content as null.
+Tool failures throw JavaScript errors. Tool arguments are positional and follow
 the upstream MCP input-schema property order.
 
 `await` works for syntax compatibility and pure JavaScript promises. Upstream

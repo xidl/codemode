@@ -109,7 +109,7 @@ fn execute_tool_with_limit(hard_limit_ms: u64) -> Tool {
         "properties": {
             "code": {
                 "type": "string",
-                "description": "JavaScript source. Use the injected global `mcp` object with positional arguments, e.g. `return unwrap(mcp.server.tool(arg1, arg2));`"
+                "description": "JavaScript source. Use the injected global `mcp` object with positional arguments, e.g. `return mcp.server.tool(arg1, arg2);`"
             },
             "timeout_ms": {
                 "type": "integer",

@@ -45,18 +45,12 @@ const DEMO_IDL: &str = r#"
 #pragma xidlc package demo
 #pragma xidlc version 1.0.0
 
-struct McpToolResult {
-    boolean isError;
-    sequence<any> content;
-    any structuredContent;
-};
-
 @mcp_server("demo")
 @mcp_namespace("default")
 interface DemoDefaultApi {
     @mcp_tool("echo")
     @mcp_read_only
-    McpToolResult echo(
+    any echo(
         string message,
         @optional @rename("tag") string label
     );
@@ -103,7 +97,7 @@ fn external_plugin_generates_installable_glue() {
     assert!(glue.dts.contains("export declare function installXidlGlue"));
     assert!(glue
         .dts
-        .contains("echo(message: string, label?: string): McpToolResult;"));
+        .contains("echo(message: string, label?: string): CodeModeValue;"));
 }
 
 #[test]
@@ -137,12 +131,11 @@ fn generated_glue_uses_null_proto_params() {
     let idl = r#"
 #pragma xidlc package demo
 #pragma xidlc version 1.0.0
-struct McpToolResult { boolean isError; sequence<any> content; any structuredContent; };
 @mcp_server("demo")
 @mcp_namespace("default")
 interface DemoDefaultApi {
     @mcp_tool("proto_tool")
-    McpToolResult proto_tool(string __proto__, string normal);
+    any proto_tool(string __proto__, string normal);
 };
 "#;
     let glue = with_plugin_on_path(|| glue::generate("demo", idl)).unwrap();
@@ -174,10 +167,9 @@ fn plugin_rejects_missing_server_annotation() {
     let idl = r#"
 #pragma xidlc package demo
 #pragma xidlc version 1.0.0
-struct McpToolResult { boolean isError; sequence<any> content; any structuredContent; };
 interface DemoDefaultApi {
     @mcp_tool("echo")
-    McpToolResult echo(string message);
+    any echo(string message);
 };
 "#;
     let err = with_plugin_on_path(|| glue::generate("demo", idl)).unwrap_err();
@@ -189,18 +181,17 @@ fn plugin_rejects_duplicate_js_names_across_namespaces() {
     let idl = r#"
 #pragma xidlc package demo
 #pragma xidlc version 1.0.0
-struct McpToolResult { boolean isError; sequence<any> content; any structuredContent; };
 @mcp_server("demo")
 @mcp_namespace("default")
 interface DemoDefaultApi {
     @mcp_tool("first.echo")
-    McpToolResult echo(string message);
+    any echo(string message);
 };
 @mcp_server("demo")
 @mcp_namespace("other")
 interface DemoOtherApi {
     @mcp_tool("second.echo")
-    McpToolResult echo(string message);
+    any echo(string message);
 };
 "#;
     let err = with_plugin_on_path(|| glue::generate("demo", idl)).unwrap_err();
