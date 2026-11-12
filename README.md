@@ -139,7 +139,7 @@ The agent calls `execute` with JavaScript:
 ```js
 const result = mcp.codegraph.codegraph_explore(
   "xidl generator",
-  12,
+  null,
   "/path/to/xidl",
 );
 return unwrap(result);

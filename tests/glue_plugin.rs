@@ -155,6 +155,21 @@ interface DemoDefaultApi {
 }
 
 #[test]
+fn required_null_is_passed_and_optional_null_is_omitted() {
+    let glue = with_plugin_on_path(|| glue::generate("demo", DEMO_IDL)).unwrap();
+    assert!(
+        glue.js
+            .contains("args[0] !== undefined) { __params[\"message\"] = args[0];",),
+        "{glue:?}"
+    );
+    assert!(
+        glue.js
+            .contains("args[1] !== undefined && args[1] !== null) { __params[\"tag\"] = args[1];",),
+        "{glue:?}"
+    );
+}
+
+#[test]
 fn plugin_rejects_missing_server_annotation() {
     let idl = r#"
 #pragma xidlc package demo

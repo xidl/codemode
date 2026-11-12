@@ -265,7 +265,7 @@ wire 名和是否 required。
 
 - 参数个数多于生成的参数个数：抛错；
 - required 位置缺失或值为 `undefined`：抛错；
-- optional 位置缺失或值为 `undefined`：不写入 wire object；
+- optional 位置缺失、值为 `undefined` 或 `null`：不写入 wire object；
 - 不做运行时类型校验，类型由上游 MCP server 自己校验。
 
 选择位置参数的原因是避免模型因为参数名大小写或拼写差异反复探测；代价是

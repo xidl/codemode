@@ -147,14 +147,18 @@ fn emit_tool(out: &mut String, server: &str, op: &OpDcl) {
     ));
     out.push_str("    const __params = Object.create(null);\n");
     for (index, (name, wire, optional)) in params.iter().enumerate() {
-        let check = format!(
-            "    if (args.length > {index} && args[{index}] !== undefined) {{ __params[{}] = args[{index}]; }}",
-            js_string(wire)
-        );
         if *optional {
+            let check = format!(
+                "    if (args.length > {index} && args[{index}] !== undefined && args[{index}] !== null) {{ __params[{}] = args[{index}]; }}",
+                js_string(wire)
+            );
             out.push_str(&check);
             out.push('\n');
         } else {
+            let check = format!(
+                "    if (args.length > {index} && args[{index}] !== undefined) {{ __params[{}] = args[{index}]; }}",
+                js_string(wire)
+            );
             out.push_str(&format!(
                 "{check} else {{ throw new Error(\"missing required argument {} for {}.{}\"); }}\n",
                 escape_js(name),

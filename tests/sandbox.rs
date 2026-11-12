@@ -62,8 +62,8 @@ function installXidlGlue(target, host) {
     if (args.length > 3) { throw new Error("too many arguments for fake.echo (expected 3)"); }
     const __params = Object.create(null);
     if (args.length > 0 && args[0] !== undefined) { __params["first_wire"] = args[0]; } else { throw new Error("missing required argument first for fake.echo"); }
-    if (args.length > 1 && args[1] !== undefined) { __params["second_wire"] = args[1]; }
-    if (args.length > 2 && args[2] !== undefined) { __params["__proto__"] = args[2]; }
+    if (args.length > 1 && args[1] !== undefined && args[1] !== null) { __params["second_wire"] = args[1]; }
+    if (args.length > 2 && args[2] !== undefined && args[2] !== null) { __params["__proto__"] = args[2]; }
     return JSON.parse(host.callTool(JSON.stringify({ server: "fake", tool: "echo", params: __params })));
   };
   Object.freeze(__ns);
@@ -132,6 +132,61 @@ fn optional_positional_argument_can_be_omitted() {
     let calls = fake.calls.lock().expect("fake caller mutex poisoned");
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0].2, json!({ "first_wire": "hello" }));
+}
+
+#[test]
+fn optional_null_positional_argument_is_omitted() {
+    let fake = FakeCaller::ok();
+    let caller: Arc<dyn ToolCaller> = fake.clone();
+    let outcome = sandbox::execute(
+        &caller,
+        &[fake_server()],
+        "return mcp.fake.echo('hello', null);",
+        Duration::from_secs(5),
+    );
+    assert!(outcome.ok, "{:?}", outcome.error);
+    let calls = fake.calls.lock().expect("fake caller mutex poisoned");
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].2, json!({ "first_wire": "hello" }));
+}
+
+#[test]
+fn required_null_positional_argument_is_passed() {
+    let fake = FakeCaller::ok();
+    let caller: Arc<dyn ToolCaller> = fake.clone();
+    let outcome = sandbox::execute(
+        &caller,
+        &[fake_server()],
+        "return mcp.fake.echo(null);",
+        Duration::from_secs(5),
+    );
+    assert!(outcome.ok, "{:?}", outcome.error);
+    let calls = fake.calls.lock().expect("fake caller mutex poisoned");
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].2, json!({ "first_wire": Value::Null }));
+}
+
+#[test]
+fn required_undefined_positional_argument_fails() {
+    let fake = FakeCaller::ok();
+    let caller: Arc<dyn ToolCaller> = fake.clone();
+    let outcome = sandbox::execute(
+        &caller,
+        &[fake_server()],
+        "const value = undefined; return mcp.fake.echo(value);",
+        Duration::from_secs(5),
+    );
+    assert!(!outcome.ok);
+    let error = outcome.error.unwrap();
+    assert!(
+        error.message.contains("missing required argument first"),
+        "{error:?}"
+    );
+    assert!(fake
+        .calls
+        .lock()
+        .expect("fake caller mutex poisoned")
+        .is_empty());
 }
 
 #[test]
