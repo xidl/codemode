@@ -70,6 +70,15 @@ fn rejects_paths_outside_roots() {
 }
 
 #[test]
+fn allows_files_under_the_filesystem_root() {
+    let dir = setup_dir();
+    write(dir.path(), "script.js", b"return 3;");
+    let roots = vec![PathBuf::from("/")];
+    let source = read_execute_source("script.js", &roots, dir.path(), 256).unwrap();
+    assert_eq!(source, "return 3;");
+}
+
+#[test]
 fn rejects_symlink_escapes_and_allows_internal_links() {
     let dir = setup_dir();
     let other = setup_dir();
