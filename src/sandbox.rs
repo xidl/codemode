@@ -179,7 +179,7 @@ struct JsOutcome {
     error: Option<ExecuteError>,
 }
 
-const MAX_CODE_BYTES: usize = 256 * 1024;
+pub const MAX_CODE_BYTES: usize = 256 * 1024;
 const MAX_RESULT_BYTES: usize = 1024 * 1024;
 const MAX_TOOL_CALLS: usize = 100;
 const MAX_LOGS: usize = 100;

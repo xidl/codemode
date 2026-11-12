@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use xidl_codemode::catalog::namespace_for;
 use xidl_codemode::config::{self, Transport};
@@ -191,6 +192,40 @@ fn parses_execute_timeout_hard_limit() {
     .unwrap();
     let loaded = config::load(Some(&path)).unwrap();
     assert_eq!(loaded.execute_timeout_hard_ms, 60000);
+}
+
+#[test]
+fn parses_execute_file_roots() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("mcp.json");
+    std::fs::write(
+        &path,
+        r#"{"mcpServers":{"demo":{"command":"demo-server"}},"executeFileRoots":["/tmp/scripts","/var/work"]}"#,
+    )
+    .unwrap();
+    let loaded = config::load(Some(&path)).unwrap();
+    assert_eq!(
+        loaded.execute_file_roots,
+        vec![PathBuf::from("/tmp/scripts"), PathBuf::from("/var/work")]
+    );
+
+    let path = dir.path().join("snake.json");
+    std::fs::write(
+        &path,
+        r#"{"mcpServers":{"demo":{"command":"demo-server"}},"execute_file_roots":["/opt"]}"#,
+    )
+    .unwrap();
+    let loaded = config::load(Some(&path)).unwrap();
+    assert_eq!(loaded.execute_file_roots, vec![PathBuf::from("/opt")]);
+
+    let path = dir.path().join("default.json");
+    std::fs::write(
+        &path,
+        r#"{"mcpServers":{"demo":{"command":"demo-server"}}}"#,
+    )
+    .unwrap();
+    let loaded = config::load(Some(&path)).unwrap();
+    assert!(loaded.execute_file_roots.is_empty());
 }
 
 #[test]

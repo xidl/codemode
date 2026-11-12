@@ -170,6 +170,8 @@ pub fn build(options: &BuildOptions) -> Result<BuiltApp> {
             tool_index,
             errors,
             execute_timeout_hard_ms: loaded.execute_timeout_hard_ms,
+            execute_file_roots: loaded.execute_file_roots,
+            cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
         }),
         docs_dir,
         docs_guard: docs.guard,

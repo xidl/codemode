@@ -168,6 +168,11 @@ namespace)`, `catalog.tools(server, namespace)`, and `catalog.describe(server,
 tool)` provide the same in-memory tool index used by the read-only
 `search_tools` MCP tool.
 
+`execute` also accepts `type: "file"` with a `path` to run an existing script
+from disk instead of inline source. Relative paths resolve against the
+workspace root, paths must stay inside the configured execute roots, and file
+mode adds no filesystem capability to the sandbox: it only loads the source.
+
 ## CLI
 
 ```bash
