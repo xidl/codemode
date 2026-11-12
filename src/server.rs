@@ -125,12 +125,11 @@ impl ServerHandler for CodemodeServer {
                 serde_json::to_string(&serde_json::json!({
                     "connectedServers": self.state.connected_servers,
                     "docsRoot": self.state.docs_dir,
-                    "callShape": "tools.<server>.<tool>(arg1, arg2, ...)",
+                    "callShape": "tools.<server>.<tool>({ param: value, ... })",
                     "examples": [
-                        "return tools.<server>.<tool>(arg1, arg2);",
-                        "return tools[\"server-name\"][\"tool.name\"](arg);"
+                        "return tools.<server>.<tool>({ param: value });"
                     ],
-                    "hint": "Read the API docs directory for signatures; return values are plain JSON."
+                    "hint": "Read the API docs directory for signatures; server, tool, and parameter names are snake_case and returns are plain JSON."
                 }))
                 .map_err(|err| {
                     McpError::internal_error(format!("serialize catalog: {err}"), None)
@@ -170,7 +169,7 @@ fn execute_tool_with_limit(state: &AppState) -> Tool {
         "properties": {
             "code": {
                 "type": "string",
-                "description": "JavaScript source. Use the injected global `tools` object with positional arguments, e.g. `return tools.server.tool(arg1, arg2);`"
+                "description": "JavaScript source. Use the injected global `tools` object with a single object argument, e.g. `return tools.server.tool({ param: value });`"
             },
             "timeout_ms": {
                 "type": "integer",
@@ -186,11 +185,11 @@ fn execute_tool_with_limit(state: &AppState) -> Tool {
         "execute",
         format!(
             "Execute sandboxed JavaScript. Connected tools are injected as \
-             `tools.<server>.<tool>(arg1, arg2, ...)` with positional arguments. \
-             Skip an optional argument before a required one with `null`, and use \
-             bracket access for invalid identifiers, for example \
-             `tools[\"server-name\"][\"tool.name\"](arg)`. Returns are plain JSON \
-             values and tool failures throw. `timeout_ms` defaults to \
+             `tools.<server>.<tool>({{ ... }})` with a single object argument. \
+             Server, tool, and parameter names are snake_case; omit optional \
+             fields instead of passing null placeholders, unknown fields are \
+             rejected, and explicit null values pass through. Returns are plain \
+             JSON values and tool failures throw. `timeout_ms` defaults to \
              {DEFAULT_EXECUTE_TIMEOUT_MS} ms and cannot exceed {} ms.",
             state.execute_timeout_hard_ms
         ),

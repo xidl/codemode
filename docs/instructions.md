@@ -5,11 +5,13 @@ Connected servers ({SERVER_NAMES}). Call `execute` with sandboxed JavaScript.
 API docs root: `{DOCS_DIR}`
 
 Connected tools are exposed as sandbox-local JavaScript bindings:
-`tools.<server>.<tool>(arg1, arg2, ...)`. Do not construct MCP protocol
-messages. Arguments are positional in IDL order; trailing optional arguments
-may be omitted, and an optional argument before a required one is skipped with
-`null`. Do not use `undefined`. Use bracket access for invalid identifiers:
-`tools["server-name"]["tool.name"](arg)`.
+`tools.<server>.<tool>({ param: value, ... })`. Do not construct MCP protocol
+messages. Server, tool, and parameter names are all snake_case; always call
+with dot access — bracket access and raw wire names are not exposed. Each tool
+accepts exactly one object argument; zero-parameter tools may omit it.
+Required fields must be present and are rejected when `undefined`; optional
+fields may be omitted; explicit `null` values pass through; unknown fields
+are rejected so typos fail fast.
 
 Calls return normal JSON values directly; tool failures throw JavaScript errors.
 Tool calls are synchronous and serial; `await` is only syntax-compatible with

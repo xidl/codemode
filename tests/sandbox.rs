@@ -58,12 +58,29 @@ impl ToolCaller for FakeCaller {
 const FAKE_GLUE: &str = r#"
 function installXidlGlue(target, host) {
   const __ns = Object.create(null);
-  __ns["echo"] = function(...args) {
-    if (args.length > 3) { throw new Error("too many arguments for fake.echo (expected 3)"); }
+  __ns["echo"] = function(input) {
+    if (input !== undefined && (typeof input !== "object" || input === null || Array.isArray(input))) {
+      throw new Error("invalid arguments for fake.echo: expected a single object argument");
+    }
     const __params = Object.create(null);
-    if (args.length > 0 && args[0] !== undefined) { __params["first_wire"] = args[0]; } else { throw new Error("missing required argument first for fake.echo"); }
-    if (args.length > 1 && args[1] !== undefined && args[1] !== null) { __params["second_wire"] = args[1]; }
-    if (args.length > 2 && args[2] !== undefined && args[2] !== null) { __params["__proto__"] = args[2]; }
+    {
+      const __value = input !== undefined && Object.prototype.hasOwnProperty.call(input, "first") ? input["first"] : undefined;
+      if (__value === undefined) { throw new Error("missing required argument first for fake.echo"); }
+      __params["first_wire"] = __value;
+    }
+    {
+      const __value = input !== undefined && Object.prototype.hasOwnProperty.call(input, "second") ? input["second"] : undefined;
+      if (__value !== undefined) { __params["second_wire"] = __value; }
+    }
+    {
+      const __value = input !== undefined && Object.prototype.hasOwnProperty.call(input, "proto_key") ? input["proto_key"] : undefined;
+      if (__value !== undefined) { __params["__proto__"] = __value; }
+    }
+    for (const __key of Object.keys(input ?? {})) {
+      if (__key !== "first" && __key !== "second" && __key !== "proto_key") {
+        throw new Error("unknown argument " + __key + " for fake.echo (expected: first, second, proto_key)");
+      }
+    }
     return JSON.parse(host.callTool(JSON.stringify({ server: "fake", tool: "echo", params: __params })));
   };
   Object.freeze(__ns);
@@ -99,14 +116,14 @@ fn executes_plain_javascript() {
 }
 
 #[test]
-fn positional_arguments_map_to_wire_object() {
+fn object_arguments_map_to_wire_object() {
     let fake = FakeCaller::ok();
     let caller: Arc<dyn ToolCaller> = fake.clone();
     let outcome = sandbox::execute(
         &caller,
         &[fake_server()],
         &[],
-        "return tools.fake.echo('hello', 7);",
+        "return tools.fake.echo({ first: 'hello', second: 7 });",
         Duration::from_secs(5),
     );
     assert!(outcome.ok, "{:?}", outcome.error);
@@ -121,14 +138,14 @@ fn positional_arguments_map_to_wire_object() {
 }
 
 #[test]
-fn optional_positional_argument_can_be_omitted() {
+fn optional_object_field_can_be_omitted() {
     let fake = FakeCaller::ok();
     let caller: Arc<dyn ToolCaller> = fake.clone();
     let outcome = sandbox::execute(
         &caller,
         &[fake_server()],
         &[],
-        "return tools.fake.echo('hello');",
+        "return tools.fake.echo({ first: 'hello' });",
         Duration::from_secs(5),
     );
     assert!(outcome.ok, "{:?}", outcome.error);
@@ -138,31 +155,34 @@ fn optional_positional_argument_can_be_omitted() {
 }
 
 #[test]
-fn optional_null_positional_argument_is_omitted() {
+fn explicit_null_fields_pass_through() {
     let fake = FakeCaller::ok();
     let caller: Arc<dyn ToolCaller> = fake.clone();
     let outcome = sandbox::execute(
         &caller,
         &[fake_server()],
         &[],
-        "return tools.fake.echo('hello', null);",
+        "return tools.fake.echo({ first: 'hello', second: null });",
         Duration::from_secs(5),
     );
     assert!(outcome.ok, "{:?}", outcome.error);
     let calls = fake.calls.lock().expect("fake caller mutex poisoned");
     assert_eq!(calls.len(), 1);
-    assert_eq!(calls[0].2, json!({ "first_wire": "hello" }));
+    assert_eq!(
+        calls[0].2,
+        json!({ "first_wire": "hello", "second_wire": Value::Null })
+    );
 }
 
 #[test]
-fn required_null_positional_argument_is_passed() {
+fn required_null_field_is_passed() {
     let fake = FakeCaller::ok();
     let caller: Arc<dyn ToolCaller> = fake.clone();
     let outcome = sandbox::execute(
         &caller,
         &[fake_server()],
         &[],
-        "return tools.fake.echo(null);",
+        "return tools.fake.echo({ first: null });",
         Duration::from_secs(5),
     );
     assert!(outcome.ok, "{:?}", outcome.error);
@@ -172,14 +192,14 @@ fn required_null_positional_argument_is_passed() {
 }
 
 #[test]
-fn required_undefined_positional_argument_fails() {
+fn required_undefined_field_fails() {
     let fake = FakeCaller::ok();
     let caller: Arc<dyn ToolCaller> = fake.clone();
     let outcome = sandbox::execute(
         &caller,
         &[fake_server()],
         &[],
-        "const value = undefined; return tools.fake.echo(value);",
+        "return tools.fake.echo({ first: undefined });",
         Duration::from_secs(5),
     );
     assert!(!outcome.ok);
@@ -196,14 +216,14 @@ fn required_undefined_positional_argument_fails() {
 }
 
 #[test]
-fn missing_required_positional_argument_fails() {
+fn missing_required_field_fails() {
     let fake = FakeCaller::ok();
     let caller: Arc<dyn ToolCaller> = fake.clone();
     let outcome = sandbox::execute(
         &caller,
         &[fake_server()],
         &[],
-        "return tools.fake.echo();",
+        "return tools.fake.echo({});",
         Duration::from_secs(5),
     );
     assert!(!outcome.ok);
@@ -221,25 +241,51 @@ fn missing_required_positional_argument_fails() {
 }
 
 #[test]
-fn extra_positional_argument_fails() {
+fn unknown_object_key_fails() {
     let fake = FakeCaller::ok();
     let caller: Arc<dyn ToolCaller> = fake.clone();
     let outcome = sandbox::execute(
         &caller,
         &[fake_server()],
         &[],
-        "return tools.fake.echo('a', 1, 2, 3);",
+        "return tools.fake.echo({ first: 'a', extra: 1 });",
         Duration::from_secs(5),
     );
     assert!(!outcome.ok);
     let error = outcome.error.unwrap();
     assert_eq!(error.code, "js_error");
-    assert!(error.message.contains("too many arguments"), "{error:?}");
+    assert!(
+        error.message.contains("unknown argument extra"),
+        "{error:?}"
+    );
     assert!(fake
         .calls
         .lock()
         .expect("fake caller mutex poisoned")
         .is_empty());
+}
+
+#[test]
+fn non_object_argument_fails() {
+    for source in [
+        "return tools.fake.echo(['a']);",
+        "return tools.fake.echo('x');",
+        "return tools.fake.echo(null);",
+    ] {
+        let outcome = sandbox::execute(
+            &bridge(),
+            &[fake_server()],
+            &[],
+            source,
+            Duration::from_secs(5),
+        );
+        assert!(!outcome.ok, "{source}");
+        let error = outcome.error.unwrap();
+        assert!(
+            error.message.contains("expected a single object argument"),
+            "{error:?}"
+        );
+    }
 }
 
 #[test]
@@ -259,41 +305,39 @@ fn hides_host_internals_from_user_code() {
 }
 
 #[test]
-fn invalid_identifiers_use_bracket_access() {
+fn snake_case_server_namespace_routes_wire_name() {
     let glue = r#"
 function installXidlGlue(target, host) {
   const ns = Object.create(null);
-  ns["tool.name"] = function(value) {
-    return JSON.parse(host.callTool(JSON.stringify({server:"fake", tool:"tool.name", params:{value}})));
+  ns["open"] = function(input) {
+    return JSON.parse(host.callTool(JSON.stringify({server:"agent-browser", tool:"open", params:{}})));
   };
   const server = Object.create(null);
-  server["fake-name"] = ns;
+  server["agent_browser"] = ns;
   for (const [key, value] of Object.entries(server)) {
     Object.defineProperty(target, key, { value, enumerable: true });
   }
 }
 "#;
     let server = RuntimeServer {
-        name: "fake".into(),
-        js_name: "fake".into(),
+        name: "agent-browser".into(),
+        js_name: "agent_browser".into(),
         glue: glue.into(),
     };
+    let fake = FakeCaller::ok();
+    let caller: Arc<dyn ToolCaller> = fake.clone();
     let outcome = sandbox::execute(
-        &bridge(),
+        &caller,
         &[server],
         &[],
-        "try { return tools[\"fake-name\"][\"tool.name\"](\"ok\"); } catch (error) { return error.message; }",
+        "return [typeof tools.agent_browser, typeof tools['agent-browser'], typeof tools.agent_browser.open()].join(',');",
         Duration::from_secs(5),
     );
     assert!(outcome.ok, "{:?}", outcome.error);
-    assert!(
-        outcome
-            .value
-            .as_str()
-            .is_some_and(|value| value.contains("server fake is not connected")),
-        "{:?}",
-        outcome.value
-    );
+    assert_eq!(outcome.value, serde_json::json!("object,undefined,string"));
+    let calls = fake.calls.lock().expect("fake caller mutex poisoned");
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].0, "agent-browser");
 }
 
 #[test]
@@ -317,7 +361,7 @@ fn proto_wire_name_survives_serialization() {
         &caller,
         &[fake_server()],
         &[],
-        "return tools.fake.echo('a', 1, 'p');",
+        "return tools.fake.echo({ first: 'a', second: 1, proto_key: 'p' });",
         Duration::from_secs(5),
     );
     assert!(outcome.ok, "{:?}", outcome.error);
@@ -336,7 +380,7 @@ fn tool_timeout_is_reported_as_tool_timeout() {
         &caller,
         &[fake_server()],
         &[],
-        "return tools.fake.echo('hello');",
+        "return tools.fake.echo({ first: 'hello' });",
         Duration::from_secs(5),
     );
     assert!(!outcome.ok);
@@ -356,7 +400,7 @@ fn caught_tool_timeout_does_not_contaminate_later_errors() {
         &caller,
         &[fake_server()],
         &[],
-        "try { tools.fake.echo('hello'); } catch (e) { throw new Error('different failure'); }",
+        "try { tools.fake.echo({ first: 'hello' }); } catch (e) { throw new Error('different failure'); }",
         Duration::from_secs(5),
     );
     assert!(!outcome.ok);
@@ -373,7 +417,7 @@ fn failed_tool_call_is_reported_as_js_error() {
         &caller,
         &[fake_server()],
         &[],
-        "return tools.fake.echo('hello');",
+        "return tools.fake.echo({ first: 'hello' });",
         Duration::from_secs(5),
     );
     assert!(!outcome.ok);

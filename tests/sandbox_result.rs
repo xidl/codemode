@@ -22,7 +22,7 @@ impl ToolCaller for FixedCaller {
 const GLUE: &str = r#"
 function installXidlGlue(target, host) {
   const ns = Object.create(null);
-  ns.echo = function() {
+  ns.echo = function(input) {
     return JSON.parse(host.callTool(JSON.stringify({server:'fake', tool:'echo', params:{}})));
   };
   const server = Object.create(null);

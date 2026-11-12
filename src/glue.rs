@@ -4,7 +4,7 @@ use std::path::Path;
 use rquickjs::{Context, Function, Object, Runtime};
 use serde::Deserialize;
 
-use crate::catalog::{is_valid_ident, sanitize_ident, ServerCatalog};
+use crate::catalog::{snake_case, ServerCatalog};
 use crate::error::{Error, Result};
 
 #[derive(Debug)]
@@ -82,17 +82,10 @@ pub fn audit(js: &str, catalog: &ServerCatalog) -> Result<()> {
             .map_err(|err| Error::Glue(format!("invalid probe report: {err}")))?;
 
         let mut expected_servers = HashSet::new();
-        expected_servers.insert(catalog.name.clone());
         expected_servers.insert(catalog.js_name.clone());
         let mut expected_tools = HashSet::new();
         for tool in &catalog.tools {
-            let js_name = if is_valid_ident(&tool.name) {
-                tool.name.clone()
-            } else {
-                sanitize_ident(&tool.name)
-            };
-            expected_tools.insert(js_name);
-            expected_tools.insert(tool.name.clone());
+            expected_tools.insert(snake_case(&tool.name));
         }
 
         let mut seen_servers = HashSet::new();

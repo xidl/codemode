@@ -10,7 +10,7 @@ use rmcp::transport::streamable_http_client::{
 use rmcp::transport::TokioChildProcess;
 use serde_json::Value;
 
-use crate::catalog::{sanitize_ident, ServerCatalog, ToolInfo};
+use crate::catalog::{canonical_server_name, ServerCatalog, ToolInfo};
 use crate::config::{ServerSpec, Transport};
 use crate::error::{Error, Result};
 use crate::sandbox::{ToolCallFailure, ToolCallFailureKind};
@@ -235,7 +235,7 @@ async fn connect_and_discover(
         .and_then(|info| info.instructions.clone());
     let catalog = ServerCatalog {
         name: spec.name.clone(),
-        js_name: sanitize_ident(&spec.name),
+        js_name: canonical_server_name(&spec.name),
         instructions,
         tools,
         namespace_map: BTreeMap::new(),

@@ -6,6 +6,8 @@ use xidl_parser::hir::{
 };
 use xidlc::jsonrpc::{serve_stdio, Artifact, ArtifactFile, Codegen, CodegenInput, RpcError};
 
+use xidl_codemode::catalog::{pascal_case, snake_case};
+
 struct GluePlugin;
 
 impl Codegen for GluePlugin {
@@ -92,7 +94,7 @@ fn build_glue(spec: &Specification) -> Result<GlueOut, String> {
 }
 
 fn emit_js(server: &str, interfaces: &[Interface]) -> String {
-    let js_server = sanitize_ident(server);
+    let js_server = snake_case(server);
     let mut out = String::new();
     out.push_str("function installXidlGlue(target, host) {\n");
     out.push_str("  const __server = Object.create(null);\n");
@@ -104,9 +106,7 @@ fn emit_js(server: &str, interfaces: &[Interface]) -> String {
     }
     out.push_str("  Object.freeze(__ns);\n");
     out.push_str(&format!("  __server[{}] = __ns;\n", js_string(server)));
-    if js_server != server {
-        out.push_str(&format!("  __server[{}] = __ns;\n", js_string(&js_server)));
-    }
+    out.push_str(&format!("  __server[{}] = __ns;\n", js_string(&js_server)));
     out.push_str("  Object.freeze(__server);\n");
     out.push_str(
         "  for (const [__key, __value] of Object.entries(__server)) {\n    \
@@ -120,6 +120,7 @@ fn emit_tool(out: &mut String, server: &str, op: &OpDcl) {
     let js_name = js_string(&op.ident);
     let wire_tool_name = annotation_rename(&op.annotations).unwrap_or_else(|| op.ident.clone());
     let wire_tool_json = js_string(&wire_tool_name);
+    let tool_label = format!("{}.{}", escape_js(server), escape_js(&wire_tool_name));
     let params = op
         .parameter
         .as_ref()
@@ -136,44 +137,56 @@ fn emit_tool(out: &mut String, server: &str, op: &OpDcl) {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    out.push_str(&format!("  __ns[{js_name}] = function(...args) {{\n"));
+    out.push_str(&format!("  __ns[{js_name}] = function(input) {{\n"));
     out.push_str(&format!(
-        "    if (args.length > {}) {{ throw new Error(\"too many arguments for {}.{} (expected {})\"); }}\n",
-        params.len(),
-        escape_js(server),
-        escape_js(&wire_tool_name),
-        params.len()
+        "    if (input !== undefined && (typeof input !== \"object\" || input === null || Array.isArray(input))) {{\n      throw new Error(\"invalid arguments for {tool_label}: expected a single object argument\");\n    }}\n"
     ));
     out.push_str("    const __params = Object.create(null);\n");
-    for (index, (name, wire, optional)) in params.iter().enumerate() {
+    for (name, wire, optional) in &params {
+        out.push_str("    {\n");
+        out.push_str(&format!(
+            "      const __value = input !== undefined && Object.prototype.hasOwnProperty.call(input, {}) ? input[{}] : undefined;\n",
+            js_string(name),
+            js_string(name)
+        ));
         if *optional {
-            let check = format!(
-                "    if (args.length > {index} && args[{index}] !== undefined && args[{index}] !== null) {{ __params[{}] = args[{index}]; }}",
-                js_string(wire)
-            );
-            out.push_str(&check);
-            out.push('\n');
-        } else {
-            let check = format!(
-                "    if (args.length > {index} && args[{index}] !== undefined) {{ __params[{}] = args[{index}]; }}",
-                js_string(wire)
-            );
             out.push_str(&format!(
-                "{check} else {{ throw new Error(\"missing required argument {} for {}.{}\"); }}\n",
-                escape_js(name),
-                escape_js(server),
-                escape_js(&wire_tool_name)
+                "      if (__value !== undefined) {{ __params[{}] = __value; }}\n",
+                js_string(wire)
             ));
+        } else {
+            out.push_str(&format!(
+                "      if (__value === undefined) {{ throw new Error(\"missing required argument {} for {tool_label}\"); }}\n",
+                escape_js(name)
+            ));
+            out.push_str(&format!("      __params[{}] = __value;\n", js_string(wire)));
         }
+        out.push_str("    }\n");
+    }
+    if params.is_empty() {
+        out.push_str(&format!(
+            "    for (const __key of Object.keys(input ?? {{}})) {{\n      throw new Error(\"unknown argument \" + __key + \" for {tool_label} (expected no arguments)\");\n    }}\n"
+        ));
+    } else {
+        let known = params
+            .iter()
+            .map(|(name, _, _)| format!("__key !== {}", js_string(name)))
+            .collect::<Vec<_>>()
+            .join(" && ");
+        let expected = params
+            .iter()
+            .map(|(name, _, _)| name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        out.push_str(&format!(
+            "    for (const __key of Object.keys(input ?? {{}})) {{\n      if ({known}) {{\n        throw new Error(\"unknown argument \" + __key + \" for {tool_label} (expected: {expected})\");\n      }}\n    }}\n"
+        ));
     }
     out.push_str(&format!(
         "    return JSON.parse(host.callTool(JSON.stringify({{ server: {server}, tool: {wire_tool_json}, params: __params }})));\n",
         server = js_string(server),
     ));
     out.push_str("  };\n");
-    if wire_tool_name != op.ident {
-        out.push_str(&format!("  __ns[{wire_tool_json}] = __ns[{js_name}];\n"));
-    }
 }
 
 fn emit_dts(server: &str, interfaces: &[Interface]) -> String {
@@ -185,6 +198,8 @@ fn emit_dts(server: &str, interfaces: &[Interface]) -> String {
         "export declare function installXidlGlue(target: object, host: XidlGlueHost): void;\n\n",
     );
     for interface in interfaces {
+        let namespace = annotation_string(&interface.annotations, "mcp_namespace")
+            .unwrap_or_else(|| "default".to_string());
         out.push_str(&format!("export interface {} {{\n", interface.name));
         for op in &interface.operations {
             let wire_tool_name =
@@ -192,25 +207,38 @@ fn emit_dts(server: &str, interfaces: &[Interface]) -> String {
             if wire_tool_name != op.ident {
                 out.push_str(&format!("  /** MCP tool: {wire_tool_name} */\n"));
             }
-            let params = op
+            let params_interface_name = format!(
+                "{}{}{}Params",
+                pascal_case(server),
+                pascal_case(&namespace),
+                pascal_case(&op.ident)
+            );
+            let fields = op
                 .parameter
                 .as_ref()
-                .map(|parameters| {
-                    parameters
-                        .0
-                        .iter()
-                        .map(|param| {
-                            let optional = param.annotations.iter().any(|annotation| {
-                                matches!(annotation, Annotation::Optional { .. })
-                            });
-                            let suffix = if optional { "?" } else { "" };
-                            format!("{}{}: {}", param.declarator.0, suffix, ts_type(&param.ty))
-                        })
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                })
+                .map(|parameters| parameters.0.clone())
                 .unwrap_or_default();
-            out.push_str(&format!("  {}({}): CodeModeValue;\n", op.ident, params));
+            out.push_str(&format!("export interface {params_interface_name} {{\n"));
+            for param in &fields {
+                let optional = param
+                    .annotations
+                    .iter()
+                    .any(|annotation| matches!(annotation, Annotation::Optional { .. }));
+                let suffix = if optional { "?" } else { "" };
+                out.push_str(&format!(
+                    "  {}{}: {};\n",
+                    param.declarator.0,
+                    suffix,
+                    ts_type(&param.ty)
+                ));
+            }
+            out.push_str("}\n\n");
+            let argument = if fields.is_empty() {
+                format!("params?: {params_interface_name}")
+            } else {
+                format!("params: {params_interface_name}")
+            };
+            out.push_str(&format!("  {}({}): CodeModeValue;\n", op.ident, argument));
         }
         out.push_str("}\n\n");
     }
@@ -238,25 +266,6 @@ fn ts_type(ty: &TypeSpec) -> String {
         TypeSpec::FloatingPtType => "number".to_string(),
         _ => "unknown".to_string(),
     }
-}
-
-fn sanitize_ident(raw: &str) -> String {
-    let mut out = String::with_capacity(raw.len());
-    for (index, ch) in raw.chars().enumerate() {
-        let valid = ch.is_ascii_alphanumeric() || ch == '_';
-        if valid {
-            if index == 0 && ch.is_ascii_digit() {
-                out.push('_');
-            }
-            out.push(ch);
-        } else {
-            out.push('_');
-        }
-    }
-    if out.is_empty() {
-        out.push_str("server");
-    }
-    out
 }
 
 fn js_string(value: &str) -> String {
