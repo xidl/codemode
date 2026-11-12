@@ -9,13 +9,14 @@ pub mod sandbox;
 pub mod server;
 pub mod workspace;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::Serialize;
 
 use crate::bridge::UpstreamManager;
+use crate::catalog::ServerCatalog;
 use crate::error::{Error, Result};
 use crate::sandbox::RuntimeServer;
 use crate::server::AppState;
@@ -40,6 +41,38 @@ pub struct BuiltApp {
     pub summaries: Vec<ServerSummary>,
 }
 
+struct ServerNameIndex {
+    names_by_js: BTreeMap<String, Vec<String>>,
+}
+
+impl ServerNameIndex {
+    fn new<'a>(catalogs: impl IntoIterator<Item = &'a ServerCatalog>) -> Self {
+        let mut names_by_js: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for catalog in catalogs {
+            names_by_js
+                .entry(catalog.js_name.clone())
+                .or_default()
+                .push(catalog.name.clone());
+        }
+        Self { names_by_js }
+    }
+
+    fn collision_message(&self, catalog: &ServerCatalog) -> Option<String> {
+        let names = self.names_by_js.get(&catalog.js_name)?;
+        (names.len() > 1).then(|| {
+            format!(
+                "server namespace collision: {} both map to {:?}",
+                names
+                    .iter()
+                    .map(|name| format!("{name:?}"))
+                    .collect::<Vec<_>>()
+                    .join(" and "),
+                catalog.js_name
+            )
+        })
+    }
+}
+
 pub fn build(options: &BuildOptions) -> Result<BuiltApp> {
     ensure_plugin_on_path();
     let loaded = config::load(options.config.as_deref())?;
@@ -52,20 +85,11 @@ pub fn build(options: &BuildOptions) -> Result<BuiltApp> {
         discovered.push((spec, result));
     }
 
-    let mut names_by_js: HashMap<String, Vec<String>> = HashMap::new();
-    for (spec, discovered) in &discovered {
-        if let Ok(catalog) = discovered {
-            names_by_js
-                .entry(catalog.js_name.clone())
-                .or_default()
-                .push(spec.name.clone());
-        }
-    }
-    let colliding_js: HashSet<String> = names_by_js
-        .iter()
-        .filter(|(_, names)| names.len() > 1)
-        .map(|(js_name, _)| js_name.clone())
-        .collect();
+    let server_names = ServerNameIndex::new(
+        discovered
+            .iter()
+            .filter_map(|(_, discovered)| discovered.as_ref().ok()),
+    );
 
     let mut runtime_servers = Vec::new();
     let mut summaries = Vec::new();
@@ -78,18 +102,8 @@ pub fn build(options: &BuildOptions) -> Result<BuiltApp> {
     for (spec, discovered) in discovered {
         match discovered {
             Ok(catalog) => {
-                if colliding_js.contains(&catalog.js_name) {
-                    let names = &names_by_js[&catalog.js_name];
-                    let message = format!(
-                        "{}: server namespace collision: {} both map to {:?}",
-                        catalog.name,
-                        names
-                            .iter()
-                            .map(|name| format!("{name:?}"))
-                            .collect::<Vec<_>>()
-                            .join(" and "),
-                        catalog.js_name
-                    );
+                if let Some(collision) = server_names.collision_message(&catalog) {
+                    let message = format!("{}: {collision}", catalog.name);
                     errors.push(message.clone());
                     summaries.push(ServerSummary {
                         name: catalog.name,
@@ -208,33 +222,13 @@ pub fn diagnose(options: &DiagnoseOptions) -> Result<Vec<ServerSummary>> {
             }
         }
     }
-    let mut names_by_js: HashMap<String, Vec<String>> = HashMap::new();
-    for catalog in &catalogs {
-        names_by_js
-            .entry(catalog.js_name.clone())
-            .or_default()
-            .push(catalog.name.clone());
-    }
-    let colliding_js: HashSet<String> = names_by_js
-        .iter()
-        .filter(|(_, names)| names.len() > 1)
-        .map(|(js_name, _)| js_name.clone())
-        .collect();
+    let server_names = ServerNameIndex::new(&catalogs);
     for catalog in catalogs {
-        let summary = if colliding_js.contains(&catalog.js_name) {
-            let names = &names_by_js[&catalog.js_name];
+        let summary = if let Some(collision) = server_names.collision_message(&catalog) {
             ServerSummary {
                 name: catalog.name.clone(),
                 tools: catalog.tools.len(),
-                error: Some(format!(
-                    "server namespace collision: {} both map to {:?}",
-                    names
-                        .iter()
-                        .map(|name| format!("{name:?}"))
-                        .collect::<Vec<_>>()
-                        .join(" and "),
-                    catalog.js_name
-                )),
+                error: Some(collision),
             }
         } else {
             match catalog::validate_server_catalog(&catalog)
