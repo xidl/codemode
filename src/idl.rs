@@ -79,6 +79,10 @@ struct IdlBuilder {
     structs: Vec<String>,
     used: HashSet<String>,
     methods: Vec<String>,
+    defs: BTreeMap<String, Value>,
+    resolving: HashSet<String>,
+    resolved_names: BTreeMap<String, String>,
+    current_struct: Vec<String>,
 }
 
 impl IdlBuilder {
@@ -91,10 +95,21 @@ impl IdlBuilder {
             structs: Vec::new(),
             used: HashSet::new(),
             methods: Vec::new(),
+            defs: BTreeMap::new(),
+            resolving: HashSet::new(),
+            resolved_names: BTreeMap::new(),
+            current_struct: Vec::new(),
         }
     }
 
     fn add_tool(&mut self, tool: &ToolInfo) {
+        self.defs.clear();
+        self.resolving.clear();
+        self.resolved_names.clear();
+        collect_defs(&tool.input_schema, &mut self.defs);
+        if let Some(output) = &tool.output_schema {
+            collect_defs(output, &mut self.defs);
+        }
         let tool_pascal = pascal_case(&method_name(&tool.name));
         let method = method_name(&tool.name);
         let required: HashSet<&str> = tool
@@ -159,8 +174,18 @@ impl IdlBuilder {
             annotations.push_str("    @mcp_open_world\n");
         }
         let docs = doc_comment(&tool.description);
+        let return_type = match &tool.output_schema {
+            Some(schema) => {
+                let hint = format!(
+                    "{}{}{}Output",
+                    self.server_pascal, self.namespace_pascal, tool_pascal
+                );
+                self.type_for(schema, &hint)
+            }
+            None => "any".to_string(),
+        };
         self.methods.push(format!(
-            "{docs}{annotations}    any {method}({param_block});"
+            "{docs}{annotations}    {return_type} {method}({param_block});"
         ));
     }
 
@@ -199,6 +224,7 @@ impl IdlBuilder {
         let Some(properties) = schema.get("properties").and_then(Value::as_object) else {
             return;
         };
+        self.current_struct.push(name.to_string());
         let required: HashSet<&str> = schema
             .get("required")
             .and_then(Value::as_array)
@@ -234,6 +260,7 @@ impl IdlBuilder {
             self.structs
                 .push(format!("struct {name} {{\n{}\n}};", fields.join("\n")));
         }
+        self.current_struct.pop();
     }
 
     fn type_for(&mut self, schema: &Value, name_hint: &str) -> String {
@@ -256,8 +283,8 @@ impl IdlBuilder {
         if schema.get("properties").is_some() {
             return self.type_for_kind("object", schema, name_hint);
         }
-        if schema.get("$ref").is_some() {
-            return "any".to_string();
+        if let Some(reference) = schema.get("$ref").and_then(Value::as_str) {
+            return self.resolve_ref(reference, name_hint);
         }
         "any".to_string()
     }
@@ -270,7 +297,14 @@ impl IdlBuilder {
             "boolean" => "boolean".to_string(),
             "array" => {
                 let item = schema.get("items").cloned().unwrap_or(Value::Null);
-                let item_type = self.type_for(&item, &format!("{name_hint}Item"));
+                let item_type = match item.get("$ref").and_then(Value::as_str).and_then(ref_name) {
+                    Some(name) if self.resolving.contains(name) => self
+                        .current_struct
+                        .last()
+                        .cloned()
+                        .unwrap_or_else(|| "any".to_string()),
+                    _ => self.type_for(&item, &format!("{name_hint}Item")),
+                };
                 format!("sequence<{item_type}>")
             }
             "object" => {
@@ -295,6 +329,54 @@ impl IdlBuilder {
             }
             "null" => "any".to_string(),
             _ => "any".to_string(),
+        }
+    }
+
+    fn resolve_ref(&mut self, reference: &str, name_hint: &str) -> String {
+        let Some(name) = ref_name(reference) else {
+            return "any".to_string();
+        };
+        if !self.resolving.contains(name) {
+            if let Some(cached) = self.resolved_names.get(name) {
+                return cached.clone();
+            }
+        }
+        let Some(target) = self.defs.get(name).cloned() else {
+            return "any".to_string();
+        };
+        if !self.resolving.insert(name.to_string()) {
+            return "any".to_string();
+        }
+        let resolved = self.type_for(&target, name_hint);
+        self.resolving.remove(name);
+        if resolved != "any" {
+            self.resolved_names
+                .insert(name.to_string(), resolved.clone());
+        }
+        resolved
+    }
+}
+
+/// Resolve a JSON pointer into a `$defs`/`definitions` entry name. Only
+/// root-level definition maps are supported; anything else falls back to
+/// `any` at the call site.
+fn ref_name(reference: &str) -> Option<&str> {
+    let path = reference.strip_prefix("#/")?;
+    let components: Vec<&str> = path.split('/').collect();
+    let name = components.last()?;
+    match components.len() {
+        2 if components[0] == "$defs" || components[0] == "definitions" => Some(name),
+        3 if components[0] == "components" && components[1] == "schemas" => Some(name),
+        _ => None,
+    }
+}
+
+fn collect_defs(schema: &Value, defs: &mut BTreeMap<String, Value>) {
+    for key in ["$defs", "definitions"] {
+        if let Some(entries) = schema.get(key).and_then(Value::as_object) {
+            for (name, value) in entries {
+                defs.entry(name.clone()).or_insert_with(|| value.clone());
+            }
         }
     }
 }

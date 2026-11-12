@@ -181,6 +181,33 @@ interface DemoIssuesApi {
 }
 
 #[test]
+fn typed_outputs_generate_struct_interfaces() {
+    let idl = r#"
+#pragma xidlc package demo
+#pragma xidlc version 1.0.0
+struct DemoIssuesSearchOutput {
+    int64 total;
+    @optional sequence<string> labels;
+};
+@mcp_server("demo")
+@mcp_namespace("issues")
+interface DemoIssuesApi {
+    @rename("issues.search")
+    DemoIssuesSearchOutput issues_search(string query);
+};
+"#;
+    let glue = with_plugin_on_path(|| glue::generate("demo", idl)).unwrap();
+    assert!(glue
+        .dts
+        .contains("export interface DemoIssuesSearchOutput {"));
+    assert!(glue.dts.contains("  total: number;"));
+    assert!(glue.dts.contains("  labels?: Array<string>;"));
+    assert!(glue
+        .dts
+        .contains("issues_search(params: DemoIssuesIssuesSearchParams): DemoIssuesSearchOutput;"));
+}
+
+#[test]
 fn null_values_pass_through() {
     let glue = with_plugin_on_path(|| glue::generate("demo", DEMO_IDL)).unwrap();
     assert!(
