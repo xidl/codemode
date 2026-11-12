@@ -87,13 +87,14 @@ MCP client --execute(code)--> QuickJS --host.callTool--> bridge 线程 --> 上�
 | D14 | JSON Schema 只映射可表达子集 | 保证所有 server 可接入，无法表达的降级为 `any` |
 | D15 | 名称统一 snake_case，wire 名用 `@rename` 保留 | 调用面统一为 dot access，原始名只用于上游通信 |
 | D16 | `agents.md` 只承载上游 instructions | API 细节只放 IDL，避免签名和描述双写 |
-| D17 | 不做磁盘 cache | 每次启动重新发现，避免缓存失效、旧文档和 secret 残留 |
+| D17 | 不做磁盘 cache | 每次启动重新发现，避免缓存失效、旧文档和 secret 残留；run 日志是唯一例外（D24） |
 | D18 | 从 crates.io 使用 xidlc/xidl-parser 0.111 | 发布和 CI 可复现，不依赖仓库外的本地路径 |
 | D19 | 单个 server 的发现/调用适配失败隔离 | 一个上游坏掉不应拖垮其他 server |
 | D20 | 默认文档使用 `<cwd>/.cache/codemode-*` | 文档是派生物，读 `$TMPDIR` 不应是正常路径，也不能删除其他工具缓存 |
 | D21 | execute timeout 是软上限，配置 timeout 是硬上限 | AI 可在安全范围内缩短，不能放大风险 |
 | D22 | 不提供 bug-report 子命令 | 无法映射时由人手动收集上下文并报告 |
 | D23 | execute 支持 code/file 双源 | 长脚本和已有脚本直接从磁盘读取，避免粘贴转义浪费上下文 |
+| D24 | run 日志与 metrics 落盘，结果只带路径 | 中断诊断和调用轨迹不进上下文，AI 需要时自己读文件 |
 
 ### D1：Rust 单仓库、双二进制
 
@@ -468,6 +469,9 @@ codemode 的 server instructions 包含：
 没有 snapshot 缓存，也没有“离线启动”。这样不会读到旧工具契约，也不会
 在缓存里留下配置 secret。
 
+唯一例外是 run 日志（D24）：它是执行后的诊断产物，不属于生成的 API
+契约，不会在下一次启动被复用，因此不算 cache。
+
 ### D18：xidlc 版本
 
 当前依赖：
@@ -761,6 +765,8 @@ execute 剩余 deadline。这避免 hung upstream 阻塞到 QuickJS interrupt �
 `execute` 的 tool `outputSchema` 由 `ExecuteOutcome` 通过 schemars 生成，
 `structuredContent` 形状与之一致。
 
+结果里的 `run` 字段指向本次执行的 run 日志（D24）。
+
 `truncated` 目前始终是 `false`；结果超限时直接返回 `limit_exceeded`，
 不会截断后继续。
 
@@ -819,6 +825,32 @@ execute 剩余 deadline。这避免 hung upstream 阻塞到 QuickJS interrupt �
 并使用 `file_not_found` / `file_forbidden` / `file_not_regular` /
 `file_too_large` / `file_invalid_utf8` / `file_read_error`，错误信息只带
 路径和原因，不回显文件内容。
+
+### D24：run 日志与 metrics
+
+每次 execute 生成一个 run 目录：
+
+```text
+.cache/codemode-log-<random>/<run-id>/
+  run.json      # run id、开始时间、source type、code bytes、timeout、版本
+  metrics.jsonl # 每个 tool call 一条 + execute 结束一条，append + flush
+  log.jsonl     # execute.start / tool_call.start/end / log / timeout / execute.end
+  summary.json  # 最终状态（ok / error_code / duration_ms / tool_call_count）
+```
+
+- 默认根目录是 `<cwd>/.cache/codemode-log-<random>/`，可用
+  `runLogDir` / `run_log_dir` 覆盖；下一次 serve 启动会把旧的
+  `codemode-*` run 一并清理；
+- 目录 0700，文件 0600；
+- `tool_call.start` 在调用前写入并 flush，超时后日志尾部就是中断点；
+  JS 中断写 `timeout` 事件（phase、pending call、最后一条 log、stack）；
+- 参数/结果只记录有界 preview（2 KiB），`authorization`、`token`、
+  `secret`、`api_key` 等 key 脱敏；
+- `ExecuteOutcome.run` 只带 `id` / `dir` / `metrics` / `log` 绝对路径，
+  现有 `tool_calls` 摘要保留，不内联完整参数/结果；
+- retention：每个 run 根目录保留最近 20 个 run 或 100 MiB，先到先删，
+  当前 run 不删；
+- 日志写入失败不影响 execute 结果，logger 降级为 no-op，`run` 缺省。
 
 ## 9. 安全与已知缺口
 

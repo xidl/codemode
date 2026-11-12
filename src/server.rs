@@ -24,6 +24,7 @@ pub struct AppState {
     pub execute_timeout_hard_ms: u64,
     pub execute_file_roots: Vec<PathBuf>,
     pub cwd: PathBuf,
+    pub run_log_root: Option<PathBuf>,
     pub tool_index: Vec<ServerCatalog>,
 }
 
@@ -327,11 +328,23 @@ impl ServerHandler for CodemodeServer {
         let bridge = self.state.bridge.clone();
         let servers = self.state.servers.clone();
         let catalogs = self.state.tool_index.clone();
+        let run_logger = self.create_run_logger(mode, &args, timeout_ms);
         let outcome = match mode {
             "code" => {
                 let code = args.code.unwrap_or_default();
                 tokio::task::spawn_blocking(move || {
-                    sandbox::execute(&bridge, &servers, &catalogs, &code, timeout)
+                    sandbox::execute_with_run_logger(
+                        &bridge,
+                        &servers,
+                        &catalogs,
+                        &code,
+                        timeout,
+                        sandbox::RunSource {
+                            kind: "code",
+                            path: None,
+                        },
+                        &run_logger,
+                    )
                 })
                 .await
             }
@@ -344,12 +357,17 @@ impl ServerHandler for CodemodeServer {
                     match read_execute_source(&path, &roots, &cwd, MAX_CODE_BYTES) {
                         Ok(code) => {
                             let remaining = timeout.saturating_sub(started.elapsed());
-                            sandbox::execute(
+                            sandbox::execute_with_run_logger(
                                 &bridge,
                                 &servers,
                                 &catalogs,
                                 &code,
                                 remaining.max(Duration::from_millis(100)),
+                                sandbox::RunSource {
+                                    kind: "file",
+                                    path: Some(path.clone()),
+                                },
+                                &run_logger,
                             )
                         }
                         Err(err) => sandbox::ExecuteOutcome {
@@ -365,6 +383,7 @@ impl ServerHandler for CodemodeServer {
                                 message: err.message,
                                 stack: None,
                             }),
+                            run: run_logger.paths().cloned(),
                         },
                     }
                 })
@@ -374,6 +393,27 @@ impl ServerHandler for CodemodeServer {
         let outcome = outcome
             .map_err(|err| McpError::internal_error(format!("sandbox task failed: {err}"), None))?;
         Ok(execute_call_result(&outcome).into())
+    }
+}
+
+impl CodemodeServer {
+    fn create_run_logger(
+        &self,
+        mode: &str,
+        args: &ExecuteArgs,
+        timeout_ms: u64,
+    ) -> std::sync::Arc<crate::runlog::RunLogger> {
+        let Some(root) = &self.state.run_log_root else {
+            return std::sync::Arc::new(crate::runlog::RunLogger::disabled());
+        };
+        let run_json = serde_json::json!({
+            "source": mode,
+            "path": args.path,
+            "code_bytes": args.code.as_deref().map(str::len).unwrap_or(0),
+            "timeout_ms": timeout_ms,
+            "version": env!("CARGO_PKG_VERSION"),
+        });
+        std::sync::Arc::new(crate::runlog::RunLogger::create(root, &run_json))
     }
 }
 

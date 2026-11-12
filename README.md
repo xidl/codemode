@@ -173,6 +173,14 @@ from disk instead of inline source. Relative paths resolve against the
 workspace root, paths must stay inside the configured execute roots, and file
 mode adds no filesystem capability to the sandbox: it only loads the source.
 
+Every execute writes a run directory under `.cache/codemode-log-<random>/`
+(override with the `runLogDir` config key). The result carries `run.dir`,
+`run.log`, and `run.metrics` absolute paths plus JSONL events for each tool
+call, console logs, and timeouts, so failures can be diagnosed after the fact
+without inflating the conversation. Directories are 0700, files 0600,
+arguments/results are bounded and redacted previews, and each root keeps the
+most recent 20 runs or 100 MiB.
+
 ## CLI
 
 ```bash
