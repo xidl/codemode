@@ -68,6 +68,57 @@ fn single_text_block_is_returned_as_string() {
 }
 
 #[test]
+fn json_object_text_is_unwrapped() {
+    let outcome = execute(json!({
+        "content": [{"type": "text", "text": "{\"number\": 361, \"title\": \"hi\"}"}]
+    }));
+    assert!(outcome.ok, "{:?}", outcome.error);
+    assert_eq!(outcome.value, json!({"number": 361, "title": "hi"}));
+}
+
+#[test]
+fn json_array_text_is_unwrapped() {
+    let outcome = execute(json!({
+        "content": [{"type": "text", "text": "  [1, 2, 3]  "}]
+    }));
+    assert!(outcome.ok, "{:?}", outcome.error);
+    assert_eq!(outcome.value, json!([1, 2, 3]));
+}
+
+#[test]
+fn invalid_json_text_stays_string() {
+    let outcome = execute(json!({
+        "content": [{"type": "text", "text": "{oops"}]
+    }));
+    assert!(outcome.ok, "{:?}", outcome.error);
+    assert_eq!(outcome.value, json!("{oops"));
+}
+
+#[test]
+fn scalar_and_string_json_stay_strings() {
+    for text in ["42", "true", "\"hello\"", "-3.5"] {
+        let outcome = execute(json!({
+            "content": [{"type": "text", "text": text}]
+        }));
+        assert!(outcome.ok, "{text}");
+        assert_eq!(outcome.value, json!(text));
+    }
+}
+
+#[test]
+fn multi_block_text_json_unwraps_per_block() {
+    let outcome = execute(json!({
+        "content": [
+            {"type": "text", "text": "{\"a\": 1}"},
+            {"type": "text", "text": "plain"},
+            {"type": "text", "text": "[2]"}
+        ]
+    }));
+    assert!(outcome.ok, "{:?}", outcome.error);
+    assert_eq!(outcome.value, json!([{"a": 1}, "plain", [2]]));
+}
+
+#[test]
 fn multiple_blocks_are_normalized() {
     let outcome = execute(json!({
         "content": [
