@@ -45,7 +45,16 @@ By default the gateway writes generated docs into a temporary run directory
 that is removed when the process exits:
 
 ```text
-.codemode/
+.cache/
+  codemode-<random>/
+    github/
+      agents.md
+      issues.idl
+    codegraph/
+      agents.md
+      default.idl
+    .internal/
+      github.bundle.idl
   .cache/
     <run-id>/
       github/
@@ -58,11 +67,12 @@ that is removed when the process exits:
         github.bundle.idl
 ```
 
-The run id contains a random component; a fresh directory is created per `serve`
-start and stale runs are cleared on the next start. Clients whose file tools
-cannot read the run directory can pass `--docs-dir <path>` to keep generated
-docs in a persistent directory; persistent mode refreshes every start and
-removes namespace files that were not generated this run.
+The random directory is created under `<cwd>/.cache/` on every `serve` start and
+removed on normal exit; startup cleanup only removes `.cache/codemode-*` runs.
+Clients whose file tools cannot read the run directory can pass
+`--docs-dir <path>` to keep generated docs in a persistent directory; persistent
+mode refreshes every start and removes namespace files that were not generated
+this run.
 
 `*.idl` is generated and must not be edited; there is no hand-written override
 path. If a generated IDL is invalid, treat it as a bug: run
@@ -74,8 +84,8 @@ The model discovers APIs from the filesystem. The codemode `instructions` only
 state the workspace convention and call shape:
 
 ```bash
-rg --files .codemode
-rg "@mcp_tool|string owner|int64 issue_number" .codemode/github/*.idl
+rg --files .cache/codemode-*
+rg "@mcp_tool|string owner|int64 issue_number" .cache/codemode-*/github/*.idl
 ```
 
 Parameter names, order, types, and optionality live only in the IDL files.
@@ -183,7 +193,7 @@ The external glue plugin is a second binary in this package:
 
 ```bash
 cargo build --bins
-xidlc gen --out-dir /tmp/out codemode-glue .codemode/.internal/codegraph.bundle.idl
+xidlc gen --out-dir /tmp/out codemode-glue .cache/codemode-*/.internal/codegraph.bundle.idl
 ```
 
 ## License

@@ -14,14 +14,13 @@ use std::sync::Arc;
 use serde::Serialize;
 
 use crate::bridge::UpstreamManager;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::sandbox::RuntimeServer;
 use crate::server::AppState;
 
 #[derive(Debug, Clone)]
 pub struct BuildOptions {
     pub config: Option<PathBuf>,
-    pub workspace: PathBuf,
     pub docs_dir: Option<PathBuf>,
 }
 
@@ -34,7 +33,6 @@ pub struct ServerSummary {
 
 pub struct BuiltApp {
     pub state: Arc<AppState>,
-    pub workspace: PathBuf,
     pub docs_dir: PathBuf,
     pub docs_guard: Option<tempfile::TempDir>,
     pub summaries: Vec<ServerSummary>,
@@ -44,10 +42,7 @@ pub fn build(options: &BuildOptions) -> Result<BuiltApp> {
     ensure_plugin_on_path();
     let loaded = config::load(options.config.as_deref())?;
     let bridge = Arc::new(UpstreamManager::start()?);
-    std::fs::create_dir_all(&options.workspace).map_err(|err| {
-        Error::Workspace(format!("create {}: {err}", options.workspace.display()))
-    })?;
-    let docs = workspace::prepare(&options.workspace, options.docs_dir.as_deref())?;
+    let docs = workspace::prepare(options.docs_dir.as_deref())?;
 
     let mut runtime_servers = Vec::new();
     let mut summaries = Vec::new();
@@ -126,7 +121,6 @@ pub fn build(options: &BuildOptions) -> Result<BuiltApp> {
             errors,
             execute_timeout_hard_ms: loaded.execute_timeout_hard_ms,
         }),
-        workspace: options.workspace.clone(),
         docs_dir: docs.path,
         docs_guard: docs.guard,
         summaries,
@@ -173,10 +167,6 @@ pub fn diagnose(options: &DiagnoseOptions) -> Result<Vec<ServerSummary>> {
         summaries.push(summary);
     }
     Ok(summaries)
-}
-
-pub fn default_workspace() -> PathBuf {
-    workspace::default_root()
 }
 
 pub fn ensure_plugin_on_path() {

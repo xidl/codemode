@@ -17,13 +17,12 @@ pub struct KeptServer {
     pub agents_md: bool,
 }
 
-pub fn default_root() -> PathBuf {
-    std::env::current_dir()
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .join(".codemode")
+pub fn prepare(docs_dir: Option<&Path>) -> Result<DocsDir> {
+    let workspace_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    prepare_in(&workspace_root, docs_dir)
 }
 
-pub fn prepare(workspace_root: &Path, docs_dir: Option<&Path>) -> Result<DocsDir> {
+fn prepare_in(workspace_root: &Path, docs_dir: Option<&Path>) -> Result<DocsDir> {
     match docs_dir {
         Some(dir) => {
             std::fs::create_dir_all(dir)
@@ -35,16 +34,17 @@ pub fn prepare(workspace_root: &Path, docs_dir: Option<&Path>) -> Result<DocsDir
         }
         None => {
             let cache = workspace_root.join(".cache");
-            if cache.exists() {
-                let _ = std::fs::remove_dir_all(&cache);
-            }
             std::fs::create_dir_all(&cache)
                 .map_err(|err| Error::Workspace(format!("create {}: {err}", cache.display())))?;
+            cleanup_stale_runs(&cache);
             let temp = tempfile::Builder::new()
-                .prefix("run-")
+                .prefix("codemode-")
                 .tempdir_in(&cache)
                 .map_err(|err| {
-                    Error::Workspace(format!("create run dir in {}: {err}", cache.display()))
+                    Error::Workspace(format!(
+                        "create codemode run dir in {}: {err}",
+                        cache.display()
+                    ))
                 })?;
             let path = temp.path().canonicalize().map_err(|err| {
                 Error::Workspace(format!("resolve {}: {err}", temp.path().display()))
@@ -53,6 +53,26 @@ pub fn prepare(workspace_root: &Path, docs_dir: Option<&Path>) -> Result<DocsDir
                 path,
                 guard: Some(temp),
             })
+        }
+    }
+}
+
+fn cleanup_stale_runs(cache: &Path) {
+    let Ok(entries) = std::fs::read_dir(cache) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let is_stale_run = entry
+            .file_type()
+            .map(|file_type| file_type.is_dir())
+            .unwrap_or(false)
+            && entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.starts_with("codemode-"));
+        if is_stale_run {
+            let _ = std::fs::remove_dir_all(&path);
         }
     }
 }
@@ -149,4 +169,43 @@ fn write_atomic(path: &Path, content: &str) -> Result<()> {
         let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o444));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn temporary_docs_use_codemode_prefix_and_preserve_cache() {
+        let root = tempfile::tempdir().unwrap();
+        let cache = root.path().join(".cache");
+        std::fs::create_dir_all(cache.join("keepme")).unwrap();
+        std::fs::write(cache.join("keepme/data"), "keep").unwrap();
+
+        let docs = prepare_in(root.path(), None).unwrap();
+        assert!(docs.path.starts_with(&cache));
+        assert!(docs
+            .path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("codemode-")));
+        assert!(cache.join("keepme/data").exists());
+        drop(docs);
+        assert!(cache.join("keepme/data").exists());
+    }
+
+    #[test]
+    fn stale_cleanup_only_removes_codemode_runs() {
+        let root = tempfile::tempdir().unwrap();
+        let cache = root.path().join(".cache");
+        std::fs::create_dir_all(cache.join("codemode-stale")).unwrap();
+        std::fs::create_dir_all(cache.join("keepme")).unwrap();
+        std::fs::write(cache.join("codemode-stale/data"), "stale").unwrap();
+        std::fs::write(cache.join("keepme/data"), "keep").unwrap();
+
+        let docs = prepare_in(root.path(), None).unwrap();
+        assert!(!cache.join("codemode-stale").exists());
+        assert!(cache.join("keepme/data").exists());
+        assert!(docs.path.exists());
+    }
 }

@@ -5,7 +5,7 @@
 本文描述 `xidl-codemode` 的实际实现和背后的关键取舍。0.4 设计修订实现了
 三处会改变核心边界的变更：
 
-1. workspace 文档默认放在 `<workspace>/.cache/<run-id>/` 临时目录中，
+1. workspace 文档默认放在 `<cwd>/.cache/codemode-<random>/` 临时目录中，
    进程退出时删除；显式 `--docs-dir` 才使用持久目录。
 2. xidl plugin 不再生成宿主解释的 `manifest.json`，而是生成可直接安装到
    QuickJS 的 glue 代码；宿主只提供带限额的 `callTool` 能力。
@@ -90,7 +90,7 @@ MCP client --execute(code)--> QuickJS --host.callTool--> bridge 线程 --> 上�
 | D17 | 不做磁盘 cache | 每次启动重新发现，避免缓存失效、旧文档和 secret 残留 |
 | D18 | 从 crates.io 使用 xidlc/xidl-parser 0.111 | 发布和 CI 可复现，不依赖仓库外的本地路径 |
 | D19 | 单个 server 的发现/调用适配失败隔离 | 一个上游坏掉不应拖垮其他 server |
-| D20 | 默认文档使用 workspace 内临时目录 | 文档是派生物，读 `$TMPDIR` 不应是正常路径 |
+| D20 | 默认文档使用 `<cwd>/.cache/codemode-*` | 文档是派生物，读 `$TMPDIR` 不应是正常路径，也不能删除其他工具缓存 |
 | D21 | execute timeout 是软上限，配置 timeout 是硬上限 | AI 可在安全范围内缩短，不能放大风险 |
 | D22 | 不提供 bug-report 子命令 | 无法映射时由人手动收集上下文并报告 |
 
@@ -125,15 +125,14 @@ optional 属性。这样下游 MCP context 不会被 N 个上游 tool schema 占
 
 ### D4：IDL 落盘，执行代码不落盘
 
-运行时文档默认放在当前 workspace 的临时 run 目录中；workspace 根目录
-可用 `--workspace` 覆盖，默认是当前目录下的 `.codemode/`。
+运行时文档默认放在当前目录的 `.cache/codemode-*` 临时 run 目录中。
 
 落盘内容：
 
 ```text
-<workspace>/
+<cwd>/
   .cache/
-    <run-id>/                 # tempfile::TempDir，RAII 持有
+    codemode-<random>/         # tempfile::TempDir，RAII 持有
       <server>/
         agents.md             # 仅当上游提供 initialize.instructions
         <namespace>.idl
@@ -142,11 +141,12 @@ optional 属性。这样下游 MCP context 不会被 N 个上游 tool schema 占
 ```
 
 `serve` 每次启动创建一个新的 run-id。目录句柄由 RAII 持有，正常退出、
-错误退出和 panic unwind 都会删除。单实例假设下，下一次启动可以直接清空
-`.cache/`，覆盖 SIGKILL 留下的目录。
+错误退出和 panic unwind 都会删除。单实例假设下，下一次启动只删除
+`.cache/codemode-*`，覆盖 SIGKILL 留下的目录，不影响其他工具的缓存。
 
 当客户端文件工具不能读取 workspace 内路径以外的系统临时目录时，这个布局
-保证了正常路径仍可读；但它仍要求客户端允许读 `<workspace>/.cache/<run-id>`。
+保证了正常路径仍可读；但它仍要求客户端允许读
+`<cwd>/.cache/codemode-<random>`。
 确实需要长期查看或导出文档时，用显式 `--docs-dir <path>` 切换到持久目录。
 持久模式同样每次启动原子刷新并清理本次没有生成的旧 namespace 文件，
 只是进程退出时不删除。
@@ -469,7 +469,7 @@ IDL 生成函数本身不返回 `Result`，不会单独失败；bundle IDL 的�
 server”覆盖连接、发现和调用适配层生成/审计失败；workspace I/O 失败没有
 per-server 隔离。
 
-### D20：临时 workspace
+### D20：临时文档目录
 
 文档与 bundle 一样是启动快照的派生物，默认不应该长期留在用户项目中。
 因此 runtime 文档放在 `<workspace>/.cache/<run-id>/`。目录由
@@ -623,17 +623,17 @@ bundle IDL 是同一份内容的合并版本，供 xidlc/插件一次性解析�
 
 ## 6. 工作区
 
-默认根目录仍是：
+默认根目录已移除；写入布局是：
 
 ```text
-<cwd>/.codemode
+<cwd>/.cache
 ```
 
 写入流程：
 
 1. 解析 catalog 快照并生成 bundle IDL；
 2. 生成 glue、在探针 context 审计，失败则该 server 不注册；
-3. 创建 `<workspace>/.cache/<run-id>/<server>/`；
+3. 创建 `<cwd>/.cache/codemode-<random>/<server>/`；
 4. 有上游 instructions 时写 `agents.md`，否则删除旧文件；
 5. 逐个写 `<namespace>.idl` 和 `.internal/<server>.bundle.idl`。
 
@@ -643,8 +643,8 @@ bundle IDL 是同一份内容的合并版本，供 xidlc/插件一次性解析�
 
 当前行为：
 
-- 默认 run 目录退出删除，单实例假设下下一次启动清空 `.cache/` 覆盖
-  SIGKILL 泄漏；持久 `--docs-dir` 清理本次没有生成的旧 namespace 文件
+- 默认 run 目录退出删除，单实例假设下下一次启动只删除 `.cache/codemode-*`
+  覆盖 SIGKILL 泄漏；持久 `--docs-dir` 清理本次没有生成的旧 namespace 文件
   和 bundle；
 - 从配置中移除 server 后，持久模式下该 server 的旧目录整体保留，
   只清理仍存在 server 的 stale namespace 文件；

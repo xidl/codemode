@@ -5,7 +5,7 @@ use clap::{Parser, Subcommand};
 use rmcp::ServiceExt;
 use tracing_subscriber::EnvFilter;
 use xidl_codemode::server::CodemodeServer;
-use xidl_codemode::{build, default_workspace, diagnose, BuildOptions, DiagnoseOptions};
+use xidl_codemode::{build, diagnose, BuildOptions, DiagnoseOptions};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -24,10 +24,8 @@ enum Command {
     Serve {
         #[arg(long)]
         config: Option<PathBuf>,
-        #[arg(long)]
-        workspace: Option<PathBuf>,
         /// Persistent docs directory. By default docs live in a temporary
-        /// `<workspace>/.cache/<run-id>/` directory that is removed on exit.
+        /// `<cwd>/.cache/codemode-<random>/` directory that is removed on exit.
         #[arg(long)]
         docs_dir: Option<PathBuf>,
     },
@@ -35,8 +33,6 @@ enum Command {
     Generate {
         #[arg(long)]
         config: Option<PathBuf>,
-        #[arg(long)]
-        workspace: Option<PathBuf>,
         #[arg(long)]
         docs_dir: PathBuf,
     },
@@ -59,16 +55,8 @@ async fn main() -> Result<()> {
         .init();
     let cli = Cli::parse();
     match cli.command {
-        Command::Serve {
-            config,
-            workspace,
-            docs_dir,
-        } => {
-            let app = build(&BuildOptions {
-                config,
-                workspace: workspace.unwrap_or_else(default_workspace),
-                docs_dir,
-            })?;
+        Command::Serve { config, docs_dir } => {
+            let app = build(&BuildOptions { config, docs_dir })?;
             for summary in &app.summaries {
                 match &summary.error {
                     Some(error) => tracing::warn!("{error}"),
@@ -80,14 +68,9 @@ async fn main() -> Result<()> {
             let running = server.serve(rmcp::transport::stdio()).await?;
             running.waiting().await?;
         }
-        Command::Generate {
-            config,
-            workspace,
-            docs_dir,
-        } => {
+        Command::Generate { config, docs_dir } => {
             let app = build(&BuildOptions {
                 config,
-                workspace: workspace.unwrap_or_else(default_workspace),
                 docs_dir: Some(docs_dir),
             })?;
             println!("docs directory: {}", app.docs_dir.display());
