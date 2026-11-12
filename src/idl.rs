@@ -2,9 +2,7 @@ use std::collections::{BTreeMap, HashSet};
 
 use serde_json::Value;
 
-use crate::catalog::{
-    is_valid_ident, namespace_for, pascal_case, sanitize_ident, ServerCatalog, ToolInfo,
-};
+use crate::catalog::{namespace_for, pascal_case, snake_case, ServerCatalog, ToolInfo};
 
 pub struct GeneratedNamespace {
     pub name: String,
@@ -112,11 +110,7 @@ impl IdlBuilder {
             .and_then(Value::as_object)
         {
             for (key, value) in properties {
-                let param_name = if is_valid_ident(key) {
-                    key.clone()
-                } else {
-                    sanitize_ident(key)
-                };
+                let param_name = snake_case(key);
                 let nested_name = format!(
                     "{}{}{}{}",
                     self.server_pascal,
@@ -212,11 +206,7 @@ impl IdlBuilder {
             .unwrap_or_default();
         let mut fields = Vec::new();
         for (key, value) in properties {
-            let field_name = if is_valid_ident(key) {
-                key.clone()
-            } else {
-                sanitize_ident(key)
-            };
+            let field_name = snake_case(key);
             let nested_name = format!("{name}{}", pascal_case(key));
             let ty = self.type_for(value, &nested_name);
             let mut annotations = Vec::new();
@@ -310,11 +300,7 @@ impl IdlBuilder {
 }
 
 fn method_name(tool: &str) -> String {
-    if is_valid_ident(tool) {
-        tool.to_string()
-    } else {
-        sanitize_ident(tool)
-    }
+    snake_case(tool)
 }
 
 fn doc_comment(text: &str) -> String {

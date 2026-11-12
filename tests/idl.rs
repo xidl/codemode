@@ -153,3 +153,47 @@ fn identical_tool_names_do_not_get_rename() {
     assert!(!idl.contains("@rename"));
     assert!(!idl.contains("@mcp_tool"));
 }
+
+#[test]
+fn camel_case_names_are_normalized_with_rename() {
+    let catalog = ServerCatalog {
+        name: "demo".into(),
+        js_name: "demo".into(),
+        instructions: None,
+        namespace_map: Default::default(),
+        tools: vec![ToolInfo {
+            name: "getIssue".into(),
+            description: String::new(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "projectPath": { "type": "string" }
+                },
+                "required": ["projectPath"]
+            }),
+            output_schema: None,
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: false,
+        }],
+    };
+    let generated = idl::generate(&catalog);
+    let idl = &generated.namespaces[0].idl;
+    assert!(idl.contains("@rename(\"getIssue\")"));
+    assert!(idl.contains("@rename(\"projectPath\")"));
+    assert!(idl.contains("string project_path"));
+    let typed = xidl_parser::parser::parser_text(idl).expect("parse generated IDL");
+    let hir = Specification::from(typed);
+    let interface = find_interface(&hir, "DemoDefaultApi").expect("DemoDefaultApi");
+    let op = find_operation(interface, "get_issue");
+    assert!(op
+        .annotations
+        .iter()
+        .any(|annotation| matches!(annotation, Annotation::Rename { name } if name == "getIssue")));
+    let params = op.parameter.as_ref().expect("parameters").0.clone();
+    assert_eq!(params[0].declarator.0, "project_path");
+    assert!(params[0].annotations.iter().any(
+        |annotation| matches!(annotation, Annotation::Rename { name } if name == "projectPath")
+    ));
+}

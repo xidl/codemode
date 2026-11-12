@@ -6,7 +6,7 @@ use rquickjs::{Context, Function, Object, Promise, Runtime, Value as JsValue};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::catalog::{is_valid_ident, namespace_for, sanitize_ident, ServerCatalog};
+use crate::catalog::{namespace_for, snake_case, ServerCatalog};
 
 pub trait ToolCaller: Send + Sync {
     fn call_tool(
@@ -182,6 +182,7 @@ const TOOL_CALL_TIMEOUT: Duration = Duration::from_secs(10);
 #[derive(Debug, Clone, Serialize)]
 pub struct CatalogTool {
     pub server: String,
+    pub wire_server: String,
     pub namespace: String,
     pub tool: String,
     pub description: String,
@@ -208,11 +209,6 @@ pub fn tool_catalog(catalogs: &[ServerCatalog]) -> Vec<CatalogTool> {
                 &all_names,
                 &catalog.namespace_map,
             );
-            let js_name = if is_valid_ident(&tool.name) {
-                tool.name.clone()
-            } else {
-                sanitize_ident(&tool.name)
-            };
             let required: std::collections::HashSet<&str> = tool
                 .input_schema
                 .get("required")
@@ -227,7 +223,7 @@ pub fn tool_catalog(catalogs: &[ServerCatalog]) -> Vec<CatalogTool> {
                     properties
                         .iter()
                         .map(|(name, schema)| CatalogArgument {
-                            name: name.clone(),
+                            name: snake_case(name),
                             wire_name: name.clone(),
                             kind: schema
                                 .get("type")
@@ -241,8 +237,9 @@ pub fn tool_catalog(catalogs: &[ServerCatalog]) -> Vec<CatalogTool> {
                 .unwrap_or_default();
             tools.push(CatalogTool {
                 server: catalog.js_name.clone(),
+                wire_server: catalog.name.clone(),
                 namespace,
-                tool: js_name,
+                tool: snake_case(&tool.name),
                 description: tool.description.clone(),
                 read_only: tool.read_only,
                 arguments,

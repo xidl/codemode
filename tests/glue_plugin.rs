@@ -82,21 +82,35 @@ fn demo_catalog(tools: &[&str]) -> ServerCatalog {
 fn external_plugin_generates_installable_glue() {
     let glue = with_plugin_on_path(|| glue::generate("demo", DEMO_IDL)).unwrap();
     assert!(glue.js.contains("function installXidlGlue(target, host)"));
-    assert!(glue.js.contains("__ns[\"echo\"] = function(...args)"));
+    assert!(glue.js.contains("__ns[\"echo\"] = function(input)"));
     assert!(glue.js.contains("tool: \"echo\""));
-    assert!(glue.js.contains("__params[\"tag\"] = args[1];"));
+    assert!(glue.js.contains("__params[\"tag\"] = __value;"));
+    assert!(glue
+        .js
+        .contains("Object.prototype.hasOwnProperty.call(input, \"message\")"));
+    assert!(glue
+        .js
+        .contains("for (const __key of Object.keys(input ?? {}))"));
+    assert!(glue
+        .js
+        .contains("unknown argument \" + __key + \" for demo.echo"));
     assert!(glue
         .js
         .contains("missing required argument message for demo.echo"));
     assert!(glue
         .js
-        .contains("too many arguments for demo.echo (expected 2)"));
+        .contains("invalid arguments for demo.echo: expected a single object argument"));
     assert!(glue.js.contains("host.callTool(JSON.stringify("));
     assert!(glue.js.contains("Object.freeze(__ns);"));
     assert!(glue.dts.contains("export declare function installXidlGlue"));
     assert!(glue
         .dts
-        .contains("echo(message: string, label?: string): CodeModeValue;"));
+        .contains("export interface DemoDefaultEchoParams {"));
+    assert!(glue.dts.contains("  message: string;"));
+    assert!(glue.dts.contains("  label?: string;"));
+    assert!(glue
+        .dts
+        .contains("echo(params: DemoDefaultEchoParams): CodeModeValue;"));
 }
 
 #[test]
@@ -141,7 +155,10 @@ interface DemoDefaultApi {
         glue.js.contains("const __params = Object.create(null);"),
         "{glue:?}"
     );
-    assert!(glue.js.contains("__params[\"__proto__\"]"), "{glue:?}");
+    assert!(
+        glue.js.contains("__params[\"__proto__\"] = __value;"),
+        "{glue:?}"
+    );
     glue::audit(&glue.js, &demo_catalog(&["proto_tool"])).unwrap();
 }
 
@@ -164,16 +181,14 @@ interface DemoIssuesApi {
 }
 
 #[test]
-fn required_null_is_passed_and_optional_null_is_omitted() {
+fn null_values_pass_through() {
     let glue = with_plugin_on_path(|| glue::generate("demo", DEMO_IDL)).unwrap();
     assert!(
-        glue.js
-            .contains("args[0] !== undefined) { __params[\"message\"] = args[0];",),
+        glue.js.contains("__params[\"message\"] = __value;",),
         "{glue:?}"
     );
     assert!(
-        glue.js
-            .contains("args[1] !== undefined && args[1] !== null) { __params[\"tag\"] = args[1];",),
+        glue.js.contains("__params[\"tag\"] = __value;",),
         "{glue:?}"
     );
 }

@@ -5,7 +5,11 @@ gateway**. It exposes exactly one MCP tool, `execute`, and injects the upstream
 tools into a QuickJS sandbox as:
 
 ```js
-tools.github.get_issue("xidl", "xidl", 361)
+tools.github.get_issue({
+  owner: "xidl",
+  repo: "codemode",
+  issue_number: 361,
+})
 ```
 
 The generated xidl contracts are written to a workspace on disk so that coding
@@ -137,18 +141,18 @@ does not recurse.
 The agent calls `execute` with JavaScript:
 
 ```js
-const result = tools.codegraph.codegraph_explore(
-  "xidl generator",
-  null,
-  "/path/to/xidl",
-);
+const result = tools.codegraph.codegraph_explore({
+  query: "xidl generator",
+  project_path: "/path/to/xidl",
+});
 return result;
 ```
 
 Tool calls return normal JSON values: structured content when present, a single
 text block as a string, multiple blocks as an array, and empty content as null.
-Tool failures throw JavaScript errors. Tool arguments are positional and follow
-the upstream MCP input-schema property order.
+Tool failures throw JavaScript errors. Each tool takes a single object
+argument; server, tool, and parameter names are snake_case, optional fields may
+be omitted, explicit null values pass through, and unknown fields are rejected.
 
 `await` works for syntax compatibility and pure JavaScript promises. Upstream
 tool calls remain synchronous and serial; `Promise.all` does not provide real

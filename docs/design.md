@@ -78,14 +78,14 @@ MCP client --execute(code)--> QuickJS --host.callTool--> bridge 线程 --> 上�
 | D5 | IDL 只生成，不支持手写 override | 避免生成契约与手写契约双写漂移 |
 | D6 | QuickJS glue 由 external xidl plugin 从 IDL 生成 | 调用适配层也是派生物，宿主不再解释第二份映射格式 |
 | D7 | 一个 namespace 一个 IDL | 大 server 的 schema 可导航，避免单文件膨胀 |
-| D8 | API 使用位置参数 | 避免模型猜测参数名大小写；参数顺序由 IDL 固定 |
+| D8 | API 使用单个对象参数，名称统一 snake_case | 参数名显式、未知字段可拒绝，不再依赖参数顺序 |
 | D9 | 每次 execute 新建 QuickJS runtime | 强隔离，避免跨执行状态、原型污染和未释放 Promise |
 | D10 | MVP 使用同步桥接 | 先保证超时、计数和错误映射正确，异步并发后置 |
 | D11 | 工具返回原始 `CallToolResult` | 不丢失 content、structuredContent 和 `isError` 语义 |
 | D12 | 配置 JSON 为主、TOML 兼容 | 当前环境实际是 `mcp.json`，同时满足用户提出的 TOML 形式 |
 | D13 | 对外 transport 只有 stdio | 当前是本地工具；远程场景需要额外认证和代码上传设计 |
 | D14 | JSON Schema 只映射可表达子集 | 保证所有 server 可接入，无法表达的降级为 `any` |
-| D15 | 名称 sanitize，保留原始名别名 | 兼容非法标识符，同时保证仍能调用 wire 上的原名 |
+| D15 | 名称统一 snake_case，wire 名用 `@rename` 保留 | 调用面统一为 dot access，原始名只用于上游通信 |
 | D16 | `agents.md` 只承载上游 instructions | API 细节只放 IDL，避免签名和描述双写 |
 | D17 | 不做磁盘 cache | 每次启动重新发现，避免缓存失效、旧文档和 secret 残留 |
 | D18 | 从 crates.io 使用 xidlc/xidl-parser 0.111 | 发布和 CI 可复现，不依赖仓库外的本地路径 |
@@ -206,10 +206,16 @@ JSON 字符串作为宿主边界，由 glue 侧做 stringify/parse），例如�
 function installXidlGlue(target, host) {
   const __server = Object.create(null);
   const __ns = Object.create(null);
-  __ns["get_issue"] = function(...args) {
-    if (args.length > 3) { throw new Error("too many arguments for github.get_issue (expected 3)"); }
-    const __params = {};
-    if (args.length > 0 && args[0] !== undefined) { __params.owner = args[0]; } else { throw new Error("missing required argument owner for github.get_issue"); }
+  __ns["get_issue"] = function(input) {
+    if (input !== undefined && (typeof input !== "object" || input === null || Array.isArray(input))) {
+      throw new Error("invalid arguments for github.get_issue: expected a single object argument");
+    }
+    const __params = Object.create(null);
+    {
+      const __value = input !== undefined && Object.prototype.hasOwnProperty.call(input, "owner") ? input["owner"] : undefined;
+      if (__value === undefined) { throw new Error("missing required argument owner for github.get_issue"); }
+      __params["owner"] = __value;
+    }
     return JSON.parse(host.callTool(JSON.stringify({ server: "github", tool: "get_issue", params: __params })));
   };
   Object.freeze(__ns);
@@ -223,7 +229,7 @@ function installXidlGlue(target, host) {
 
 `host` 是宿主注入的唯一能力入口，只提供 `callTool`，并统一执行调用数、
 单次调用超时和错误包装。`host` 不注册为全局，只作为 install 参数被 glue
-闭包捕获，用户代码无法直接访问。位置参数到 wire object 的转换由 glue
+闭包捕获，用户代码无法直接访问。对象参数到 wire object 的转换由 glue
 完成。
 
 `glue.d.ts` 是同一份 IDL 的类型视图，供 AI 阅读和 CI 对生成产物做类型
@@ -252,28 +258,35 @@ MCP tool 名本身是扁平的。当前分组规则按顺序执行：
 库层的 `ServerCatalog` 有 `namespace_map` 字段，但配置加载和 bridge 目前
 始终传空 map，因此用户配置不能覆盖 namespace 分组。
 
-### D8：位置参数
+### D8：对象参数与 snake_case 命名
 
 调用形式：
 
 ```js
-const issue = tools.github.get_issue("xidl", "xidl", 361);
+const issue = tools.github.get_issue({
+  owner: "xidl",
+  repo: "xidl",
+  issue_number: 361,
+});
 return issue;
 ```
 
-参数顺序来自生成的 IDL，而 IDL 的参数顺序来自上游
-`inputSchema.properties` 的 JSON 顺序。glue 固化每个位置的 IDL 参数名、
-wire 名和是否 required。
+每个 tool 只接受一个对象参数。server、tool、参数和嵌套 struct 字段统一
+snake_case（camelCase、PascalCase 和分隔符都归一化），转换后与原名不同的
+地方用 `@rename("原始名")` 保留 wire 名。原始 server 名只用于 `tools/call`
+路由，不作为推荐 JS key。
 
 运行时行为：
 
-- 参数个数多于生成的参数个数：抛错；
-- required 位置缺失或值为 `undefined`：抛错；
-- optional 位置缺失、值为 `undefined` 或 `null`：不写入 wire object；
+- 参数不是普通对象（数组、null、原始值）：抛错；
+- required 字段缺失或值为 `undefined`：抛错，错误信息带 server/tool/field；
+- optional 字段缺失或值为 `undefined`：不写入 wire object；
+- 显式 `null` 原样传递；
+- 对象中出现未知字段：抛错，避免拼写错误被静默忽略；
 - 不做运行时类型校验，类型由上游 MCP server 自己校验。
 
-选择位置参数的原因是避免模型因为参数名大小写或拼写差异反复探测；代价是
-长参数列表的可读性较差，必须依赖 IDL。
+wire params 使用 `Object.create(null)` 构建，`__proto__` 等 key 不会被原型
+污染。零参数 tool 可以传 `{}`，也可以省略参数。
 
 ### D9：每次 execute 新建 QuickJS runtime
 
@@ -394,25 +407,30 @@ QuickJS 只提供：
 - tool description 和字段 description 写进 `///`；
 - description 最多保留 12 行；
 - required 参数不带 `@optional`，其余带 `@optional`；
-- 非法 identifier sanitize，并用 `@rename("original")` 保留 wire 名；
+- 名称统一 snake_case（camelCase/PascalCase/分隔符都归一化），与原名不同时
+  用 `@rename("original")` 保留 wire 名；转换后碰撞会在注册时报错；
 - method 名与原始 tool 名不同时带 `@rename("原始 tool 名")`，相同时不带；
 - flags 只在为 true 时写 `@mcp_read_only`、`@mcp_destructive`、
   `@mcp_idempotent`、`@mcp_open_world`。
 
-### D15：名称 sanitize 与原名别名
+### D15：名称统一 snake_case 与 `@rename`
 
-server namespace 同时注册：
+server、tool、参数和 struct 字段名统一 snake_case：
 
-- `tools["<原始 server 名>"]`；
-- `tools.<sanitize 后的 server 名>`（如果不同）。
+- `agent-browser` -> `agent_browser`；
+- `getIssue` -> `get_issue`；
+- `projectPath` -> `project_path`。
 
-tool 函数同时注册：
+推荐调用形式固定为 `tools.<snake_case server>.<tool>({ ... })`，不再提供
+`tools["原始名"]` bracket access 别名。与 wire 名不同的地方由 `@rename`
+保留原始名：原始 server 名只用于 upstream `tools/call` 路由，原始 tool 名和
+参数名只用于 wire params。
 
-- `tools.server["<原始 tool 名>"]`；
-- `tools.server.<sanitize 后的 tool 名>`（如果不同）。
+转换后发生碰撞（例如 `getIssue` 与 `get_issue`、`agent-browser` 与
+`agent_browser`）会在注册时报错并指出两个原始名，不做静默改写。
 
-namespace 对象会被冻结。这样即使 tool 名包含 `.`、`-` 或其他非法字符，
-也仍然可以调用。
+namespace 对象会被冻结。上游名称风格再混乱，JS 侧也始终是统一的
+snake_case。
 
 ### D16：`agents.md` 只承载上游 instructions
 
@@ -423,7 +441,7 @@ namespace 对象会被冻结。这样即使 tool 名包含 `.`、`-` 或其他�
 codemode 的 server instructions 包含：
 
 1. workspace 绝对路径；
-2. `tools.<server>.<tool>(arg1, arg2, ...)` 和普通 JSON 返回值的调用方式；
+2. `tools.<server>.<tool>({ ... })` 和普通 JSON 返回值的调用方式；
 3. docs root 以及 IDL / `agents.md` 的路径约定；
 4. 启动时失败的 server 列表。
 
@@ -586,12 +604,16 @@ bundle IDL 是同一份内容的合并版本，供 xidlc/插件一次性解析�
 插件生成一次 `installXidlGlue(target, host)`。每个 tool 函数固化：
 
 - JS 名和原始 wire tool 名；
-- 参数个数；
+- 单个对象参数的形状校验（数组/null/原始值拒绝）；
 - IDL 参数名到 wire 参数名的映射；
 - required/optional 判定。
 
+`glue.d.ts` 为每个 tool 生成命名 `<Server><Namespace><Tool>Params`
+interface：字段 snake_case，optional 字段带 `?`；方法签名是
+`tool(params): CodeModeValue`。
+
 宿主只注入 `host.callTool(call)`。它统一执行调用数、单次调用超时、结果
-大小、错误包装和调用记录。位置参数到 wire object 的转换完全由 glue
+大小、错误包装和调用记录。对象参数到 wire object 的转换完全由 glue
 完成；宿主不再读取 `manifest.json`。
 
 ### 5.3 安装审计

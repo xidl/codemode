@@ -40,6 +40,8 @@ fn catalog_search_matches_names_and_scopes() {
     let tools = sandbox::search_catalog(&catalogs, Some("issues get"), None, None);
     assert_eq!(tools.len(), 1);
     assert_eq!(tools[0].tool, "issues_get");
+    assert_eq!(tools[0].server, "github");
+    assert_eq!(tools[0].wire_server, "github");
     assert_eq!(tools[0].namespace, "issues");
 
     let namespace_only = sandbox::search_catalog(&catalogs, None, Some("github"), Some("issues"));
@@ -58,7 +60,7 @@ fn catalog_helpers_are_frozen_and_share_index() {
         &caller,
         &[],
         &catalogs,
-        "return {servers: JSON.parse(catalog.servers()), issue: catalog.search('issues get', '', '').length - 119};",
+        "return {servers: JSON.parse(catalog.servers()), issue: JSON.parse(catalog.search('issues get', '', '')).length};",
         std::time::Duration::from_secs(5),
     );
     assert!(outcome.ok, "{:?}", outcome.error);
@@ -79,7 +81,7 @@ fn instructions_are_compact_and_reference_upstream_notes() {
     let connected_servers = vec![demo.js_name.clone()];
     let instructions = xidl_codemode::build_instructions(&docs.path, &connected_servers, &[]);
     assert!(instructions.contains("Connected servers (demo)."));
-    assert!(instructions.contains("tools.<server>.<tool>(arg1, arg2, ...)"));
+    assert!(instructions.contains("tools.<server>.<tool>({ param: value, ... })"));
     assert!(instructions.contains("sandbox-local JavaScript bindings"));
     assert!(instructions.contains("<server>/agents.md"));
     assert!(!instructions.contains("UNTRUSTED_UPSTREAM_TEXT"));

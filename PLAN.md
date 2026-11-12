@@ -274,13 +274,13 @@ IDL 里的参数签名。
 JS 命名空间：
 
 ```text
-mcp.<serverNs>.<toolFn>(arg1, arg2, ...)
+mcp.<serverNs>.<toolFn>({ param: value, ... })
 ```
 
 - `serverNs` 默认由 server 名 sanitize 成合法 JS identifier，例如
   `agent-browser` -> `agent_browser`。
 - 同时保留原名访问：`mcp["agent-browser"]`。
-- `toolFn` 优先保留原始 tool 名；非法时 sanitize，并保留 bracket access。
+- `toolFn` 统一 snake_case；与 wire 名不同时用 `@rename` 保留原名。
 - `mcp` 和每个 server namespace 使用 null-prototype 对象并冻结。
 
 ### 2.5 JSON Schema -> xidl
@@ -417,7 +417,8 @@ codemode 在同一个 bin 目录，或由 codemode 给 xidlc 子进程注入插�
 
 嵌套 object 的公共类型抽取（可选优化）：
 
-- 顶层 tool 参数按 schema properties 顺序生成位置参数，不再包一层 input struct。
+- 顶层 tool 参数按 schema properties 生成单个对象参数的字段，不再包一层
+  input struct。
 - 嵌套 object 仍生成命名 struct；公共字段抽取只针对这些嵌套 struct。
 - 第一版先不抽取，保证正确性；第二版再加。
 
@@ -477,7 +478,7 @@ return unwrap(issue);
 - 第二层是 tool 函数，参数按 MCP input schema 的 property 顺序位置传入；
   runtime 把它们映射为 MCP args object。
 - MVP 同步返回原始 `CallToolResult`；`await` 普通值仍然可用。
-- 原始 server/tool 名通过 bracket access 保留。
+- 原始 server/tool 名通过 `@rename` 保留，只用于 wire 通信。
 - 不提供 `mcp.list()` / `mcp.read()` 之类的读取 API；发现信息来自工作区
   IDL 文件，以及 `instructions` 里的 workspace 约定。
 
@@ -755,7 +756,7 @@ serde_json = "1"
   `{mcpname}/{namespace}.idl`。
 - 所有 IDL 通过 xidlc TypeScript 生成。
 - 输出中不出现配置里的 secret。
-- IDL 包含完整位置参数签名；有上游 instructions 的 server 生成
+- IDL 包含完整对象参数签名；有上游 instructions 的 server 生成
   `agents.md`。
 - `xidlc gen codemode-manifest` 生成的 manifest 能覆盖所有 tool；
   缺项/多项/名字冲突都报错。
@@ -822,7 +823,7 @@ serde_json = "1"
 - Secret redaction：env/header 值不出现在日志/manifest/IDL/错误中。
 - namespace 提取：点号/冒号前缀、下划线/中划线前缀、`default` 回退、
   `namespace_map` 覆盖、冲突处理。
-- IDL 位置参数签名、`agents.md` 上游 instructions 注入预算。
+- IDL 对象参数签名、`agents.md` 上游 instructions 注入预算。
 - 每个 namespace 一个 IDL、`common` 共享类型、`bundle.idl` 校验。
 - manifest 插件：HIR fixture -> manifest 快照；server/namespace/tool/
   input/output/flags 映射；unknown annotation 由插件解释。

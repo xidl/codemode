@@ -8,13 +8,14 @@ pub mod sandbox;
 pub mod server;
 pub mod workspace;
 
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::Serialize;
 
 use crate::bridge::UpstreamManager;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::sandbox::RuntimeServer;
 use crate::server::AppState;
 
@@ -44,15 +45,65 @@ pub fn build(options: &BuildOptions) -> Result<BuiltApp> {
     let bridge = Arc::new(UpstreamManager::start()?);
     let docs = workspace::prepare(options.docs_dir.as_deref())?;
 
+    let mut discovered = Vec::new();
+    for spec in loaded.servers {
+        let result = bridge.discover(spec.clone());
+        discovered.push((spec, result));
+    }
+
+    let mut names_by_js: HashMap<String, Vec<String>> = HashMap::new();
+    for (spec, discovered) in &discovered {
+        if let Ok(catalog) = discovered {
+            names_by_js
+                .entry(catalog.js_name.clone())
+                .or_default()
+                .push(spec.name.clone());
+        }
+    }
+    let colliding_js: HashSet<String> = names_by_js
+        .iter()
+        .filter(|(_, names)| names.len() > 1)
+        .map(|(js_name, _)| js_name.clone())
+        .collect();
+
     let mut runtime_servers = Vec::new();
     let mut summaries = Vec::new();
     let mut errors = Vec::new();
     let mut connected_servers = Vec::new();
     let mut tool_index = Vec::new();
     let mut kept = Vec::new();
-    for spec in loaded.servers {
-        match bridge.discover(spec.clone()) {
+    for (spec, discovered) in discovered {
+        match discovered {
             Ok(catalog) => {
+                if colliding_js.contains(&catalog.js_name) {
+                    let names = &names_by_js[&catalog.js_name];
+                    let message = format!(
+                        "{}: server namespace collision: {} both map to {:?}",
+                        catalog.name,
+                        names
+                            .iter()
+                            .map(|name| format!("{name:?}"))
+                            .collect::<Vec<_>>()
+                            .join(" and "),
+                        catalog.js_name
+                    );
+                    errors.push(message.clone());
+                    summaries.push(ServerSummary {
+                        name: catalog.name,
+                        tools: catalog.tools.len(),
+                        error: Some(message),
+                    });
+                    continue;
+                }
+                if let Err(message) = catalog::validate_server_catalog(&catalog) {
+                    errors.push(message.clone());
+                    summaries.push(ServerSummary {
+                        name: catalog.name,
+                        tools: catalog.tools.len(),
+                        error: Some(message),
+                    });
+                    continue;
+                }
                 let generated = idl::generate(&catalog);
                 let glue_result = glue::generate(&catalog.name, &generated.bundle)
                     .and_then(|glue| glue::audit(&glue.js, &catalog).map(|_| glue));
@@ -136,32 +187,68 @@ pub fn diagnose(options: &DiagnoseOptions) -> Result<Vec<ServerSummary>> {
     let loaded = config::load(options.config.as_deref())?;
     let bridge = UpstreamManager::start()?;
     let mut summaries = Vec::new();
+    let mut catalogs = Vec::new();
     for spec in loaded.servers {
-        let summary = match bridge.discover(spec.clone()) {
+        match bridge.discover(spec.clone()) {
             Ok(catalog) => {
-                let generated = idl::generate(&catalog);
-                let tools = catalog.tools.len();
-                let name = catalog.name.clone();
-                match glue::generate(&name, &generated.bundle)
-                    .and_then(|glue| glue::audit(&glue.js, &catalog))
-                {
-                    Ok(()) => ServerSummary {
-                        name,
-                        tools,
-                        error: None,
-                    },
-                    Err(err) => ServerSummary {
-                        name,
-                        tools,
-                        error: Some(err.to_string()),
-                    },
-                }
+                catalogs.push(catalog);
             }
-            Err(err) => ServerSummary {
-                name: spec.name,
-                tools: 0,
-                error: Some(err.to_string()),
-            },
+            Err(err) => {
+                summaries.push(ServerSummary {
+                    name: spec.name,
+                    tools: 0,
+                    error: Some(err.to_string()),
+                });
+            }
+        }
+    }
+    let mut names_by_js: HashMap<String, Vec<String>> = HashMap::new();
+    for catalog in &catalogs {
+        names_by_js
+            .entry(catalog.js_name.clone())
+            .or_default()
+            .push(catalog.name.clone());
+    }
+    let colliding_js: HashSet<String> = names_by_js
+        .iter()
+        .filter(|(_, names)| names.len() > 1)
+        .map(|(js_name, _)| js_name.clone())
+        .collect();
+    for catalog in catalogs {
+        let summary = if colliding_js.contains(&catalog.js_name) {
+            let names = &names_by_js[&catalog.js_name];
+            ServerSummary {
+                name: catalog.name.clone(),
+                tools: catalog.tools.len(),
+                error: Some(format!(
+                    "server namespace collision: {} both map to {:?}",
+                    names
+                        .iter()
+                        .map(|name| format!("{name:?}"))
+                        .collect::<Vec<_>>()
+                        .join(" and "),
+                    catalog.js_name
+                )),
+            }
+        } else {
+            match catalog::validate_server_catalog(&catalog)
+                .map_err(Error::Glue)
+                .and_then(|()| {
+                    let generated = idl::generate(&catalog);
+                    glue::generate(&catalog.name, &generated.bundle)
+                        .and_then(|glue| glue::audit(&glue.js, &catalog))
+                }) {
+                Ok(()) => ServerSummary {
+                    name: catalog.name.clone(),
+                    tools: catalog.tools.len(),
+                    error: None,
+                },
+                Err(err) => ServerSummary {
+                    name: catalog.name.clone(),
+                    tools: catalog.tools.len(),
+                    error: Some(err.to_string()),
+                },
+            }
         };
         summaries.push(summary);
     }
