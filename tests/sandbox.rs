@@ -250,6 +250,43 @@ fn hides_host_internals_from_user_code() {
 }
 
 #[test]
+fn invalid_identifiers_use_bracket_access() {
+    let glue = r#"
+function installXidlGlue(target, host) {
+  const ns = Object.create(null);
+  ns["tool.name"] = function(value) {
+    return JSON.parse(host.callTool(JSON.stringify({server:"fake", tool:"tool.name", params:{value}})));
+  };
+  const server = Object.create(null);
+  server["fake-name"] = ns;
+  for (const [key, value] of Object.entries(server)) {
+    Object.defineProperty(target, key, { value, enumerable: true });
+  }
+}
+"#;
+    let server = RuntimeServer {
+        name: "fake".into(),
+        js_name: "fake".into(),
+        glue: glue.into(),
+    };
+    let outcome = sandbox::execute(
+        &bridge(),
+        &[server],
+        "try { return mcp[\"fake-name\"][\"tool.name\"](\"ok\"); } catch (error) { return error.message; }",
+        Duration::from_secs(5),
+    );
+    assert!(outcome.ok, "{:?}", outcome.error);
+    assert!(
+        outcome
+            .value
+            .as_str()
+            .is_some_and(|value| value.contains("server fake is not connected")),
+        "{:?}",
+        outcome.value
+    );
+}
+
+#[test]
 fn mcp_object_is_frozen() {
     let outcome = sandbox::execute(
         &bridge(),

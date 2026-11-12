@@ -3,11 +3,13 @@
 Code-mode gateway. Call `execute` with inline JavaScript.
 API docs directory: `{DOCS_DIR}`
 
-MCP APIs are injected as `mcp.<server>.<tool>(arg1, arg2, ...)`.
+MCP APIs are injected as `mcp.<server>.<tool>(arg1, arg2, ...)`. Tool arguments
+are positional in IDL order; trailing optional arguments may be omitted, and an
+optional argument before a required one is skipped with `null`. Do not use
+`undefined`. Use bracket access for invalid identifiers:
+`mcp["server-name"]["tool.name"](arg)`.
+
 Calls return normal JSON values directly; tool failures throw JavaScript errors.
-Tool arguments
-are positional; trailing optional arguments may be omitted, and an optional
-argument before a required one is skipped with `null`. Do not use `undefined`.
 Tool calls remain synchronous and serial; `await` is only syntax-compatible
 with pure JavaScript promises.
 

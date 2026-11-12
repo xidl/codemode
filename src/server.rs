@@ -125,7 +125,11 @@ fn execute_tool_with_limit(hard_limit_ms: u64) -> Tool {
         "execute",
         format!(
             "Execute JavaScript in a QuickJS sandbox. MCP tools are injected as \
-             `mcp.<server>.<tool>(arg1, arg2, ...)`. `timeout_ms` defaults to \
+             `mcp.<server>.<tool>(arg1, arg2, ...)` with positional arguments. \
+             Skip an optional argument before a required one with `null`, and use \
+             bracket access for invalid identifiers, for example \
+             `mcp[\"server-name\"][\"tool.name\"](arg)`. Returns are plain JSON \
+             values and tool failures throw. `timeout_ms` defaults to \
              {DEFAULT_EXECUTE_TIMEOUT_MS} ms and cannot exceed {hard_limit_ms} ms."
         ),
         schema
