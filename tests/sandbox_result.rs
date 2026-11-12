@@ -44,6 +44,7 @@ fn execute(result: Value) -> xidl_codemode::sandbox::ExecuteOutcome {
     sandbox::execute(
         &caller,
         &[server()],
+        &[],
         "return mcp.fake.echo();",
         Duration::from_secs(5),
     )

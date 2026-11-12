@@ -14,6 +14,7 @@ use std::sync::Arc;
 use serde::Serialize;
 
 use crate::bridge::UpstreamManager;
+use crate::catalog::ServerCatalog;
 use crate::error::Result;
 use crate::sandbox::RuntimeServer;
 use crate::server::AppState;
@@ -51,6 +52,7 @@ pub fn build(options: &BuildOptions) -> Result<BuiltApp> {
     let mut server_catalog = Vec::new();
     let mut namespace_list = Vec::new();
     let mut execute_catalog = Vec::new();
+    let mut tool_index = Vec::new();
     let mut kept = Vec::new();
     for spec in loaded.servers {
         match bridge.discover(spec.clone()) {
@@ -94,6 +96,7 @@ pub fn build(options: &BuildOptions) -> Result<BuiltApp> {
                             catalog.tools.len(),
                             namespaces.join(", ")
                         ));
+                        tool_index.push(catalog.clone());
                         summaries.push(ServerSummary {
                             name: catalog.name,
                             tools: catalog.tools.len(),
@@ -132,6 +135,7 @@ pub fn build(options: &BuildOptions) -> Result<BuiltApp> {
         &server_catalog,
         &namespace_list,
         &execute_catalog,
+        &tool_index,
         &errors,
     );
     Ok(BuiltApp {
@@ -140,6 +144,7 @@ pub fn build(options: &BuildOptions) -> Result<BuiltApp> {
             servers: runtime_servers,
             instructions,
             execute_catalog,
+            tool_index,
             errors,
             execute_timeout_hard_ms: loaded.execute_timeout_hard_ms,
         }),
@@ -239,6 +244,7 @@ pub fn build_instructions(
     server_catalog: &[String],
     namespace_list: &[Vec<String>],
     execute_catalog: &[String],
+    _tool_index: &[ServerCatalog],
     errors: &[String],
 ) -> String {
     let mut upstream = String::new();

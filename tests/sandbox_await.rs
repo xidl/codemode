@@ -13,6 +13,7 @@ fn awaits_resolved_promise_value() {
     let outcome = sandbox::execute(
         &bridge(),
         &[],
+        &[],
         "return await Promise.resolve(42);",
         Duration::from_secs(5),
     );
@@ -24,6 +25,7 @@ fn awaits_resolved_promise_value() {
 fn awaits_in_user_code() {
     let outcome = sandbox::execute(
         &bridge(),
+        &[],
         &[],
         "const value = await Promise.resolve(1); return value + 1;",
         Duration::from_secs(5),
@@ -37,6 +39,7 @@ fn awaits_pure_js_promise_all() {
     let outcome = sandbox::execute(
         &bridge(),
         &[],
+        &[],
         "return await Promise.all([Promise.resolve(1), Promise.resolve(2)]);",
         Duration::from_secs(5),
     );
@@ -48,6 +51,7 @@ fn awaits_pure_js_promise_all() {
 fn async_throw_is_reported() {
     let outcome = sandbox::execute(
         &bridge(),
+        &[],
         &[],
         "await Promise.resolve(); throw new Error('x');",
         Duration::from_secs(5),
@@ -62,6 +66,7 @@ fn async_throw_is_reported() {
 fn blocked_promise_reports_would_block() {
     let outcome = sandbox::execute(
         &bridge(),
+        &[],
         &[],
         "await new Promise(() => {});",
         Duration::from_secs(5),

@@ -65,7 +65,7 @@ MCP client --execute(code)--> QuickJS --host.callTool--> bridge 线程 --> 上�
 4. 生成 `agents.md`（仅当上游提供 `initialize.instructions`）。
 5. 用 bundle IDL 调用 external xidl plugin，生成 QuickJS glue。
 6. 在探针 context 安装 glue，并与 catalog 对账后注册 `mcp.<server>`。
-7. 对外只暴露一个 `execute` 工具。
+7. 对外暴露 `execute` 和只读 `search_tools`。
 
 ## 3. 关键决策
 
@@ -73,7 +73,7 @@ MCP client --execute(code)--> QuickJS --host.callTool--> bridge 线程 --> 上�
 | --- | --- | --- |
 | D1 | Rust 单仓库、双二进制 | 主程序、MCP 协议、QuickJS 和 xidlc 都在 Rust 侧，边界最少 |
 | D2 | 复用 `rmcp` 做 server 和 client | 不手写 initialize、分页、stdio framing 和生命周期 |
-| D3 | 对外只暴露 `execute` | code mode 的核心是收敛工具数量，发现信息走工作区文档 |
+| D3 | 业务执行只暴露 `execute`，另提供只读 `search_tools` | code mode 收敛业务调用；发现走文档和只读目录 |
 | D4 | IDL 落盘，`execute.code` 走 stdio | 文档可被文件工具索引，执行代码不产生临时脚本 |
 | D5 | IDL 只生成，不支持手写 override | 避免生成契约与手写契约双写漂移 |
 | D6 | QuickJS glue 由 external xidl plugin 从 IDL 生成 | 调用适配层也是派生物，宿主不再解释第二份映射格式 |
@@ -115,13 +115,17 @@ MCP client --execute(code)--> QuickJS --host.callTool--> bridge 线程 --> 上�
 配置里的 `sse`、`streamable-http`、`streamable_http` 目前都归一化为
 streamable HTTP；没有单独的 SSE transport 实现。
 
-### D3：只暴露 `execute`
+### D3：业务执行只暴露 `execute`
 
-下游 `tools/list` 永远只返回 `execute`。不提供 `list_apis`、`read_api`、
-MCP resource 或任何其他读取 API 的工具。
+下游 `tools/list` 返回 `execute` 和只读 `search_tools`。不提供 `list_apis`、
+`read_api`、MCP resource 或任何其他读取 API 的工具。
 
 模型通过普通文件工具读取工作区里的 IDL 来发现参数名、顺序、类型和
 optional 属性。这样下游 MCP context 不会被 N 个上游 tool schema 占满。
+
+`search_tools` 只读取内存中的 catalog 索引，返回截断后的 signature/参数摘要，
+标记 `readOnlyHint`；QuickJS 内的 `catalog.*` 与它共享同一份索引，作为脚本内
+兜底。
 
 ### D4：IDL 落盘，执行代码不落盘
 

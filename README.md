@@ -154,6 +154,11 @@ the upstream MCP input-schema property order.
 tool calls remain synchronous and serial; `Promise.all` does not provide real
 upstream concurrency.
 
+Inside `execute`, `catalog.servers()`, `catalog.search(query, server,
+namespace)`, `catalog.tools(server, namespace)`, and `catalog.describe(server,
+tool)` provide the same in-memory tool index used by the read-only
+`search_tools` MCP tool.
+
 ## CLI
 
 ```bash

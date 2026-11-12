@@ -89,6 +89,7 @@ fn executes_plain_javascript() {
     let outcome = sandbox::execute(
         &bridge(),
         &[],
+        &[],
         "const x = 40; return x + 2;",
         Duration::from_secs(5),
     );
@@ -104,6 +105,7 @@ fn positional_arguments_map_to_wire_object() {
     let outcome = sandbox::execute(
         &caller,
         &[fake_server()],
+        &[],
         "return mcp.fake.echo('hello', 7);",
         Duration::from_secs(5),
     );
@@ -125,6 +127,7 @@ fn optional_positional_argument_can_be_omitted() {
     let outcome = sandbox::execute(
         &caller,
         &[fake_server()],
+        &[],
         "return mcp.fake.echo('hello');",
         Duration::from_secs(5),
     );
@@ -141,6 +144,7 @@ fn optional_null_positional_argument_is_omitted() {
     let outcome = sandbox::execute(
         &caller,
         &[fake_server()],
+        &[],
         "return mcp.fake.echo('hello', null);",
         Duration::from_secs(5),
     );
@@ -157,6 +161,7 @@ fn required_null_positional_argument_is_passed() {
     let outcome = sandbox::execute(
         &caller,
         &[fake_server()],
+        &[],
         "return mcp.fake.echo(null);",
         Duration::from_secs(5),
     );
@@ -173,6 +178,7 @@ fn required_undefined_positional_argument_fails() {
     let outcome = sandbox::execute(
         &caller,
         &[fake_server()],
+        &[],
         "const value = undefined; return mcp.fake.echo(value);",
         Duration::from_secs(5),
     );
@@ -196,6 +202,7 @@ fn missing_required_positional_argument_fails() {
     let outcome = sandbox::execute(
         &caller,
         &[fake_server()],
+        &[],
         "return mcp.fake.echo();",
         Duration::from_secs(5),
     );
@@ -220,6 +227,7 @@ fn extra_positional_argument_fails() {
     let outcome = sandbox::execute(
         &caller,
         &[fake_server()],
+        &[],
         "return mcp.fake.echo('a', 1, 2, 3);",
         Duration::from_secs(5),
     );
@@ -239,6 +247,7 @@ fn hides_host_internals_from_user_code() {
     let outcome = sandbox::execute(
         &bridge(),
         &[fake_server()],
+        &[],
         "return [typeof __xidl_call, typeof __xidl_manifest, typeof __xidl_log, typeof host, typeof __xidl_log_fn, typeof __console].join(',');",
         Duration::from_secs(5),
     );
@@ -272,6 +281,7 @@ function installXidlGlue(target, host) {
     let outcome = sandbox::execute(
         &bridge(),
         &[server],
+        &[],
         "try { return mcp[\"fake-name\"][\"tool.name\"](\"ok\"); } catch (error) { return error.message; }",
         Duration::from_secs(5),
     );
@@ -291,6 +301,7 @@ fn mcp_object_is_frozen() {
     let outcome = sandbox::execute(
         &bridge(),
         &[fake_server()],
+        &[],
         "return Object.isFrozen(mcp) ? 'frozen' : 'mutable';",
         Duration::from_secs(5),
     );
@@ -305,6 +316,7 @@ fn proto_wire_name_survives_serialization() {
     let outcome = sandbox::execute(
         &caller,
         &[fake_server()],
+        &[],
         "return mcp.fake.echo('a', 1, 'p');",
         Duration::from_secs(5),
     );
@@ -323,6 +335,7 @@ fn tool_timeout_is_reported_as_tool_timeout() {
     let outcome = sandbox::execute(
         &caller,
         &[fake_server()],
+        &[],
         "return mcp.fake.echo('hello');",
         Duration::from_secs(5),
     );
@@ -342,6 +355,7 @@ fn caught_tool_timeout_does_not_contaminate_later_errors() {
     let outcome = sandbox::execute(
         &caller,
         &[fake_server()],
+        &[],
         "try { mcp.fake.echo('hello'); } catch (e) { throw new Error('different failure'); }",
         Duration::from_secs(5),
     );
@@ -358,6 +372,7 @@ fn failed_tool_call_is_reported_as_js_error() {
     let outcome = sandbox::execute(
         &caller,
         &[fake_server()],
+        &[],
         "return mcp.fake.echo('hello');",
         Duration::from_secs(5),
     );
@@ -372,6 +387,7 @@ fn interrupts_infinite_loop() {
     let outcome = sandbox::execute(
         &bridge(),
         &[],
+        &[],
         "console.log('started'); while (true) {}",
         Duration::from_secs(1),
     );
@@ -385,7 +401,7 @@ fn interrupts_infinite_loop() {
 
 #[test]
 fn rejects_invalid_javascript() {
-    let outcome = sandbox::execute(&bridge(), &[], "return (;", Duration::from_secs(5));
+    let outcome = sandbox::execute(&bridge(), &[], &[], "return (;", Duration::from_secs(5));
     assert!(!outcome.ok);
     assert_eq!(outcome.error.as_ref().unwrap().code, "js_error");
 }
@@ -393,7 +409,7 @@ fn rejects_invalid_javascript() {
 #[test]
 fn rejects_oversized_code() {
     let code = format!("return '{}';", "x".repeat(256 * 1024));
-    let outcome = sandbox::execute(&bridge(), &[], &code, Duration::from_secs(5));
+    let outcome = sandbox::execute(&bridge(), &[], &[], &code, Duration::from_secs(5));
     assert!(!outcome.ok);
     assert_eq!(outcome.error.unwrap().code, "limit_exceeded");
 }
@@ -402,6 +418,7 @@ fn rejects_oversized_code() {
 fn rejects_oversized_result() {
     let outcome = sandbox::execute(
         &bridge(),
+        &[],
         &[],
         "return 'x'.repeat(1024 * 1024 + 1);",
         Duration::from_secs(5),
@@ -415,6 +432,7 @@ fn reports_runtime_exception() {
     let outcome = sandbox::execute(
         &bridge(),
         &[],
+        &[],
         "throw new Error('boom')",
         Duration::from_secs(5),
     );
@@ -426,7 +444,13 @@ fn reports_runtime_exception() {
 
 #[test]
 fn converts_undefined_to_null() {
-    let outcome = sandbox::execute(&bridge(), &[], "return undefined;", Duration::from_secs(5));
+    let outcome = sandbox::execute(
+        &bridge(),
+        &[],
+        &[],
+        "return undefined;",
+        Duration::from_secs(5),
+    );
     assert!(outcome.ok);
     assert_eq!(outcome.value, serde_json::Value::Null);
 }

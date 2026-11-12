@@ -10,6 +10,7 @@ use rmcp::{ErrorData as McpError, RoleServer, ServerHandler};
 use serde::Deserialize;
 use serde_json::Value;
 
+use crate::catalog::ServerCatalog;
 use crate::sandbox::{self, RuntimeServer, ToolCaller};
 
 pub struct AppState {
@@ -19,6 +20,7 @@ pub struct AppState {
     pub errors: Vec<String>,
     pub execute_timeout_hard_ms: u64,
     pub execute_catalog: Vec<String>,
+    pub tool_index: Vec<ServerCatalog>,
 }
 
 #[derive(Clone)]
@@ -34,6 +36,20 @@ pub struct ExecuteArgs {
     /// Execution timeout in milliseconds (default 10000, clamped to the
     /// configured hard limit).
     pub timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SearchToolsArgs {
+    pub query: Option<String>,
+    pub server: Option<String>,
+    pub namespace: Option<String>,
+    #[serde(default = "default_search_limit")]
+    pub limit: usize,
+}
+
+fn default_search_limit() -> usize {
+    8
 }
 
 const DEFAULT_EXECUTE_TIMEOUT_MS: u64 = 10_000;
@@ -61,6 +77,7 @@ impl ServerHandler for CodemodeServer {
     ) -> Result<ListToolsResult, McpError> {
         Ok(ListToolsResult::with_all_items(vec![
             execute_tool_with_limit(&self.state),
+            search_tools_tool(),
         ]))
     }
 
@@ -69,6 +86,29 @@ impl ServerHandler for CodemodeServer {
         request: CallToolRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
+        if request.name == "search_tools" {
+            let arguments = request.arguments.unwrap_or_default();
+            let args: SearchToolsArgs =
+                serde_json::from_value(Value::Object(arguments)).map_err(|err| {
+                    McpError::invalid_params(format!("invalid search_tools arguments: {err}"), None)
+                })?;
+            let mut tools = sandbox::search_catalog(
+                &self.state.tool_index,
+                args.query.as_deref(),
+                args.server.as_deref(),
+                args.namespace.as_deref(),
+            );
+            let total = tools.len();
+            tools.truncate(args.limit.clamp(1, 20));
+            let text = serde_json::to_string(&serde_json::json!({
+                "total": total,
+                "returned": tools.len(),
+                "hasMore": total > tools.len(),
+                "tools": tools,
+            }))
+            .map_err(|err| McpError::internal_error(format!("serialize search: {err}"), None))?;
+            return Ok(CallToolResult::success(vec![ContentBlock::text(text)]).into());
+        }
         if request.name != "execute" {
             return Err(McpError::invalid_params(
                 format!(
@@ -108,9 +148,10 @@ impl ServerHandler for CodemodeServer {
         let timeout = Duration::from_millis(timeout_ms);
         let bridge = self.state.bridge.clone();
         let servers = self.state.servers.clone();
+        let catalogs = self.state.tool_index.clone();
         let code = args.code;
         let outcome = tokio::task::spawn_blocking(move || {
-            sandbox::execute(&bridge, &servers, &code, timeout)
+            sandbox::execute(&bridge, &servers, &catalogs, &code, timeout)
         })
         .await
         .map_err(|err| McpError::internal_error(format!("sandbox task failed: {err}"), None))?;
@@ -155,4 +196,24 @@ fn execute_tool_with_limit(state: &AppState) -> Tool {
             .cloned()
             .expect("execute tool schema must be a JSON object"),
     )
+}
+
+fn search_tools_tool() -> Tool {
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+            "server": {"type": "string"},
+            "namespace": {"type": "string"},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 8}
+        },
+        "additionalProperties": false
+    });
+    let mut tool = Tool::new(
+        "search_tools",
+        "Search connected MCP tools by name, namespace, server, description, or argument. Read-only discovery; no upstream tool is called.",
+        schema.as_object().cloned().expect("search schema object"),
+    );
+    tool.annotations = Some(rmcp::model::ToolAnnotations::new().read_only(true));
+    tool
 }

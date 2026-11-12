@@ -6,6 +6,8 @@ use rquickjs::{Context, Function, Object, Promise, Runtime, Value as JsValue};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::catalog::{is_valid_ident, namespace_for, sanitize_ident, ServerCatalog};
+
 pub trait ToolCaller: Send + Sync {
     fn call_tool(
         &self,
@@ -177,9 +179,127 @@ const MAX_LOGS: usize = 100;
 const MAX_LOG_BYTES: usize = 64 * 1024;
 const TOOL_CALL_TIMEOUT: Duration = Duration::from_secs(10);
 
+#[derive(Debug, Clone, Serialize)]
+pub struct CatalogTool {
+    pub server: String,
+    pub namespace: String,
+    pub tool: String,
+    pub description: String,
+    pub read_only: bool,
+    pub arguments: Vec<CatalogArgument>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CatalogArgument {
+    pub name: String,
+    pub wire_name: String,
+    pub kind: String,
+    pub optional: bool,
+}
+
+pub fn tool_catalog(catalogs: &[ServerCatalog]) -> Vec<CatalogTool> {
+    let mut tools = Vec::new();
+    for catalog in catalogs {
+        let all_names: Vec<String> = catalog.tools.iter().map(|tool| tool.name.clone()).collect();
+        for tool in &catalog.tools {
+            let namespace = namespace_for(
+                &catalog.name,
+                &tool.name,
+                &all_names,
+                &catalog.namespace_map,
+            );
+            let js_name = if is_valid_ident(&tool.name) {
+                tool.name.clone()
+            } else {
+                sanitize_ident(&tool.name)
+            };
+            let required: std::collections::HashSet<&str> = tool
+                .input_schema
+                .get("required")
+                .and_then(Value::as_array)
+                .map(|values| values.iter().filter_map(Value::as_str).collect())
+                .unwrap_or_default();
+            let arguments = tool
+                .input_schema
+                .get("properties")
+                .and_then(Value::as_object)
+                .map(|properties| {
+                    properties
+                        .iter()
+                        .map(|(name, schema)| CatalogArgument {
+                            name: name.clone(),
+                            wire_name: name.clone(),
+                            kind: schema
+                                .get("type")
+                                .and_then(Value::as_str)
+                                .unwrap_or("any")
+                                .to_string(),
+                            optional: !required.contains(name.as_str()),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            tools.push(CatalogTool {
+                server: catalog.js_name.clone(),
+                namespace,
+                tool: js_name,
+                description: tool.description.clone(),
+                read_only: tool.read_only,
+                arguments,
+            });
+        }
+    }
+    tools
+}
+
+pub fn search_catalog(
+    catalogs: &[ServerCatalog],
+    query: Option<&str>,
+    server: Option<&str>,
+    namespace: Option<&str>,
+) -> Vec<CatalogTool> {
+    let terms: Vec<String> = query
+        .map(|query| {
+            query
+                .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
+                .filter(|term| !term.is_empty())
+                .map(str::to_ascii_lowercase)
+                .collect()
+        })
+        .unwrap_or_default();
+    let tools = tool_catalog(catalogs);
+    tools
+        .into_iter()
+        .filter(|tool| server.is_none_or(|server| tool.server.eq_ignore_ascii_case(server)))
+        .filter(|tool| {
+            namespace.is_none_or(|namespace| tool.namespace.eq_ignore_ascii_case(namespace))
+        })
+        .filter(|tool| {
+            if terms.is_empty() {
+                return true;
+            }
+            let haystack = format!(
+                "{} {} {} {} {}",
+                tool.server,
+                tool.namespace,
+                tool.tool,
+                tool.description,
+                tool.arguments
+                    .iter()
+                    .map(|argument| argument.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )
+            .to_ascii_lowercase();
+            terms.iter().all(|term| haystack.contains(term))
+        })
+        .collect()
+}
+
 pub fn execute(
     bridge: &Arc<dyn ToolCaller>,
     servers: &[RuntimeServer],
+    catalogs: &[ServerCatalog],
     code: &str,
     timeout: Duration,
 ) -> ExecuteOutcome {
@@ -205,6 +325,7 @@ pub fn execute(
     let result = run_js(RunContext {
         bridge: bridge.clone(),
         servers: servers.to_vec(),
+        catalogs: catalogs.to_vec(),
         code: code.to_string(),
         deadline,
         logs: logs.clone(),
@@ -266,6 +387,7 @@ pub fn execute(
 struct RunContext {
     bridge: Arc<dyn ToolCaller>,
     servers: Vec<RuntimeServer>,
+    catalogs: Vec<ServerCatalog>,
     code: String,
     deadline: Instant,
     logs: Arc<Mutex<Vec<LogEntry>>>,
@@ -282,6 +404,7 @@ fn run_js(context: RunContext) -> std::result::Result<JsOutcome, (String, Option
     let RunContext {
         bridge,
         servers,
+        catalogs,
         code,
         deadline,
         logs,
@@ -411,6 +534,84 @@ fn run_js(context: RunContext) -> std::result::Result<JsOutcome, (String, Option
         }
         ctx.eval::<(), _>("Object.freeze(globalThis.mcp);")
             .map_err(|err| (format!("freeze mcp: {err}"), None))?;
+
+        let catalog =
+            Object::new(ctx.clone()).map_err(|err| (format!("create catalog: {err}"), None))?;
+        let catalog_tools = tool_catalog(&catalogs);
+        let server_tools = catalog_tools.clone();
+        let servers_fn = Function::new(ctx.clone(), move || -> rquickjs::Result<String> {
+            let servers: std::collections::BTreeMap<String, usize> =
+                server_tools
+                    .iter()
+                    .fold(Default::default(), |mut acc, tool| {
+                        *acc.entry(tool.server.clone()).or_default() += 1;
+                        acc
+                    });
+            serde_json::to_string(&servers)
+                .map_err(|err| host_error(format!("serialize catalog servers: {err}")))
+        })
+        .map_err(|err| (format!("create catalog.servers: {err}"), None))?;
+        catalog
+            .set("servers", servers_fn)
+            .map_err(|err| (format!("install catalog.servers: {err}"), None))?;
+
+        let search_catalogs = catalogs.clone();
+        let search_fn = Function::new(
+            ctx.clone(),
+            move |query: String, server: String, namespace: String| -> rquickjs::Result<String> {
+                let query = (!query.is_empty()).then_some(query.as_str());
+                let server = (!server.is_empty()).then_some(server.as_str());
+                let namespace = (!namespace.is_empty()).then_some(namespace.as_str());
+                serde_json::to_string(&search_catalog(&search_catalogs, query, server, namespace))
+                    .map_err(|err| host_error(format!("serialize catalog search: {err}")))
+            },
+        )
+        .map_err(|err| (format!("create catalog.search: {err}"), None))?;
+        catalog
+            .set("search", search_fn)
+            .map_err(|err| (format!("install catalog.search: {err}"), None))?;
+
+        let tools_catalogs = catalogs.clone();
+        let tools_fn = Function::new(
+            ctx.clone(),
+            move |server: String, namespace: String| -> rquickjs::Result<String> {
+                let server = (!server.is_empty()).then_some(server.as_str());
+                let namespace = (!namespace.is_empty()).then_some(namespace.as_str());
+                serde_json::to_string(&search_catalog(&tools_catalogs, None, server, namespace))
+                    .map_err(|err| host_error(format!("serialize catalog tools: {err}")))
+            },
+        )
+        .map_err(|err| (format!("create catalog.tools: {err}"), None))?;
+        catalog
+            .set("tools", tools_fn)
+            .map_err(|err| (format!("install catalog.tools: {err}"), None))?;
+
+        let describe_tools = catalog_tools.clone();
+        let describe_fn = Function::new(
+            ctx.clone(),
+            move |server: String, tool: String| -> rquickjs::Result<String> {
+                let found = describe_tools
+                    .iter()
+                    .find(|entry| {
+                        entry.server.eq_ignore_ascii_case(&server)
+                            && (entry.tool.eq_ignore_ascii_case(&tool)
+                                || entry.namespace.eq_ignore_ascii_case(&tool))
+                    })
+                    .cloned();
+                serde_json::to_string(&found)
+                    .map_err(|err| host_error(format!("serialize catalog describe: {err}")))
+            },
+        )
+        .map_err(|err| (format!("create catalog.describe: {err}"), None))?;
+        catalog
+            .set("describe", describe_fn)
+            .map_err(|err| (format!("install catalog.describe: {err}"), None))?;
+
+        globals
+            .set("catalog", catalog.clone())
+            .map_err(|err| (format!("inject catalog: {err}"), None))?;
+        ctx.eval::<(), _>("Object.freeze(globalThis.catalog);")
+            .map_err(|err| (format!("freeze catalog: {err}"), None))?;
 
         let code_json = serde_json::to_string(&code)
             .map_err(|err| (format!("encode user code: {err}"), None))?;
