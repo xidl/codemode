@@ -16,6 +16,19 @@ are rejected so typos fail fast.
 Calls return normal JSON values directly: upstream `structuredContent` wins,
 and a text block that is itself JSON (object/array) is unwrapped automatically,
 so you rarely need `JSON.parse`. Tool failures throw JavaScript errors.
+
+`execute` accepts `type="code"` (default) or `type="file"`.
+
+Use `type="code"` for short, one-off, generated JavaScript. Put the source in
+`code`.
+Use `type="file"` when the user points to an existing script on disk, or when
+you are iterating on a long script that already exists as a file. Put the path
+in `path`.
+
+`type="file"` only loads the source from disk; the sandbox still has no
+filesystem access. Do not use `type="file"` just to inspect a file; it executes
+the file as JavaScript. Paths must be inside the allowed roots (default: the
+current workspace). Prefer relative paths for workspace files.
 Tool calls are synchronous and serial; `await` is only syntax-compatible with
 pure JavaScript promises.
 Use `search_tools` before calling when you need to find a tool by intent.

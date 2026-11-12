@@ -15,6 +15,8 @@ struct ConfigFile {
         default
     )]
     execute_timeout_hard_ms: Option<u64>,
+    #[serde(rename = "executeFileRoots", alias = "execute_file_roots", default)]
+    execute_file_roots: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -58,6 +60,7 @@ pub struct ServerSpec {
 pub struct LoadedConfig {
     pub servers: Vec<ServerSpec>,
     pub execute_timeout_hard_ms: u64,
+    pub execute_file_roots: Vec<PathBuf>,
 }
 
 const DEFAULT_EXECUTE_TIMEOUT_HARD_MS: u64 = 60_000;
@@ -115,6 +118,12 @@ pub fn load(path: Option<&Path>) -> Result<LoadedConfig> {
             .execute_timeout_hard_ms
             .unwrap_or(DEFAULT_EXECUTE_TIMEOUT_HARD_MS)
             .max(100),
+        execute_file_roots: config
+            .execute_file_roots
+            .unwrap_or_default()
+            .into_iter()
+            .map(PathBuf::from)
+            .collect(),
     })
 }
 

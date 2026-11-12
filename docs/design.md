@@ -93,6 +93,7 @@ MCP client --execute(code)--> QuickJS --host.callTool--> bridge 线程 --> 上�
 | D20 | 默认文档使用 `<cwd>/.cache/codemode-*` | 文档是派生物，读 `$TMPDIR` 不应是正常路径，也不能删除其他工具缓存 |
 | D21 | execute timeout 是软上限，配置 timeout 是硬上限 | AI 可在安全范围内缩短，不能放大风险 |
 | D22 | 不提供 bug-report 子命令 | 无法映射时由人手动收集上下文并报告 |
+| D23 | execute 支持 code/file 双源 | 长脚本和已有脚本直接从磁盘读取，避免粘贴转义浪费上下文 |
 
 ### D1：Rust 单仓库、双二进制
 
@@ -773,7 +774,9 @@ execute 剩余 deadline。这避免 hung upstream 阻塞到 QuickJS interrupt �
   "inputSchema": {
     "type": "object",
     "properties": {
+      "type": { "type": "string", "enum": ["code", "file"], "default": "code" },
       "code": { "type": "string" },
+      "path": { "type": "string" },
       "timeout_ms": {
         "type": "integer",
         "minimum": 100,
@@ -781,15 +784,41 @@ execute 剩余 deadline。这避免 hung upstream 阻塞到 QuickJS interrupt �
         "default": 10000
       }
     },
-    "required": ["code"],
-    "additionalProperties": false
+    "additionalProperties": false,
+    "oneOf": [
+      {"properties": {"type": {"const": "code"}}, "required": ["code"]},
+      {"properties": {"type": {"const": "file"}}, "required": ["path"]}
+    ]
   }
 }
 ```
 
-`ExecuteArgs` 使用 `deny_unknown_fields`，传 `path` 或其他字段会得到
-invalid params。schema 的 `maximum` 动态写为配置硬上限，运行时仍会
-clamp。未知 tool 名同样返回 invalid params。
+`ExecuteArgs` 使用 `deny_unknown_fields`；`type` 缺失等价于 `"code"`，
+`code` 与 `path` 交叉传入会得到 invalid params。schema 的 `maximum` 动态
+写为配置硬上限，运行时仍会 clamp。未知 tool 名同样返回 invalid params。
+
+### D23：execute 的 code/file 双模式
+
+`type="code"`（默认）执行内联 JavaScript；`type="file"` 从磁盘读取脚本，
+在同一个 QuickJS 沙箱执行。文件模式只改变源码来源，不给沙箱增加 fs/network
+能力，默认关着除非通过文件请求。
+
+路径规则：
+
+- 相对路径按 serve 时的 workspace 根（`cwd`）解析；绝对路径必须落在允许
+  根目录内；
+- 允许根目录默认只有 `cwd`，可用 `executeFileRoots` / `execute_file_roots`
+  扩展；空数组禁用 file 模式；
+- 先 canonicalize 再做前缀检查，`..` 和指向根目录外的 symlink 会被拒绝；
+- 只接受 regular file，目录、FIFO、设备文件都拒绝；
+- 复用 256 KiB 上限，读取按 `MAX_CODE_BYTES + 1` 截断，不先无界读入内存；
+- 仅接受 UTF-8，BOM 去掉，首行 shebang 去掉并保留行号；
+- 文件读取计入 `timeout_ms`：读取后把剩余时间作为 sandbox 预算。
+
+错误模型：schema 形状错误走 `invalid_params`；IO 错误走 `ExecuteOutcome`
+并使用 `file_not_found` / `file_forbidden` / `file_not_regular` /
+`file_too_large` / `file_invalid_utf8` / `file_read_error`，错误信息只带
+路径和原因，不回显文件内容。
 
 ## 9. 安全与已知缺口
 
