@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.5.0](https://github.com/xidl/codemode/compare/v0.4.1...v0.5.0) (2026-11-12)
+
+
+### ⚠ BREAKING CHANGES
+
+* normalize tool results into plain JavaScript values
+* use null placeholders for optional positional arguments
+* use .cache/codemode runs for temporary docs
+
+### Features
+
+* add searchable MCP tool catalog ([becc416](https://github.com/xidl/codemode/commit/becc41600743298518115867d4811648e46d2f8c))
+* expose connected server catalog for discovery ([94164c0](https://github.com/xidl/codemode/commit/94164c06ccddceccc439a44834aacb37b43e77b9))
+* normalize tool results into plain JavaScript values ([b74fb50](https://github.com/xidl/codemode/commit/b74fb501121cdfdada5cdf1d85b1d73e4e58d44e))
+* support await syntax with pure JavaScript promises ([9091b22](https://github.com/xidl/codemode/commit/9091b223dc9606d39cecba701c6ee1f7f7cf408c))
+* use null placeholders for optional positional arguments ([37a7add](https://github.com/xidl/codemode/commit/37a7addc41a4b4c49431413e7d76cbbd6c503b68))
+
+
+### Code Refactoring
+
+* use .cache/codemode runs for temporary docs ([7fe3a77](https://github.com/xidl/codemode/commit/7fe3a7786614b187de747f086324590187b0bd85))
+
 ## [0.4.1](https://github.com/xidl/codemode/compare/v0.4.0...v0.4.1) (2026-11-12)
 
 
