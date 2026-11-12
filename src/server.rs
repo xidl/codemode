@@ -117,11 +117,11 @@ fn path_within(path: &Path, root: &Path) -> bool {
         if cfg!(windows) {
             text = text.to_ascii_lowercase();
         }
-        text
+        text.trim_end_matches('/').to_string()
     };
     let file = normalize(path);
     let root = normalize(root);
-    file == root || file.starts_with(&format!("{root}/"))
+    root.is_empty() || file == root || file.starts_with(&format!("{root}/"))
 }
 
 /// Read the file-mode source. Relative paths resolve against `cwd`; the file
