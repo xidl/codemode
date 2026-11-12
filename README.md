@@ -154,6 +154,10 @@ Tool failures throw JavaScript errors. Each tool takes a single object
 argument; server, tool, and parameter names are snake_case, optional fields may
 be omitted, explicit null values pass through, and unknown fields are rejected.
 
+When an upstream tool declares an `outputSchema`, the generated IDL and
+`glue.d.ts` include a named output struct and the operation returns that type
+instead of a generic value; tools without an `outputSchema` stay untyped.
+
 `await` works for syntax compatibility and pure JavaScript promises. Upstream
 tool calls remain synchronous and serial; `Promise.all` does not provide real
 upstream concurrency.

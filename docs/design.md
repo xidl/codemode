@@ -383,8 +383,9 @@ QuickJS 只提供：
 
 ### D14：JSON Schema 映射范围
 
-当前只生成输入参数类型，所有 operation 的返回类型统一是 `any`。
-`outputSchema` 会被 catalog 捕获，但不会生成专用输出 struct。
+输入参数和 `outputSchema` 返回类型都按同一套规则映射。顶层 `object` 的
+`outputSchema` 生成命名 `<Server><Namespace><Tool>Output` struct，operation
+返回该类型；没有 `outputSchema` 时保持 `any`。
 
 | JSON Schema | 生成的 IDL |
 | --- | --- |
@@ -396,11 +397,18 @@ QuickJS 只提供：
 | `object` + 非空 `properties` | 命名 `struct` |
 | `object` + `additionalProperties` | `map<string, T>`；布尔形式为 `map<string, any>` |
 | `type` 数组且只有一个非 null 类型 | 该类型 |
-| 其他 `type` 数组、`$ref`、无法判断 | `any` |
+| 其他 `type` 数组、无法判断 | `any` |
 
-不映射的内容包括：`enum`、`default`、`minimum`/`maximum`、`allOf`、
-`oneOf`、`$defs`、递归引用和 `outputSchema`。这些不是生成失败；它们会
-以 `any` 或普通基础类型降级，并在 IDL 中失去部分精度。
+`$ref` 支持根级 `$defs` / `definitions` / `components/schemas` 指针，解析
+结果按 def 名记忆化；递归引用通过 `sequence<自身>` 表达，直接自引用和无法
+解析的指针降级为 `any`。不映射的内容包括：`enum`、`default`、
+`minimum`/`maximum`、`allOf`、`oneOf` 和嵌套在子 schema 内部的 `$defs`。
+这些不是生成失败；它们会以 `any` 或普通基础类型降级，并在 IDL 中失去部分
+精度。
+
+边界：`outputSchema` 描述的是 MCP `structuredContent`，而归一化结果对
+text-only 上游可能返回 `string`。返回类型只描述 `structuredContent` 路径；
+text fallback 的类型按 D11 的归一化表理解。
 
 其他 IDL 规则：
 
@@ -544,7 +552,8 @@ struct ToolInfo {
 }
 ```
 
-`output_schema` 目前只用于记录，不参与 IDL 生成，也不进入 glue。
+`output_schema` 参与 IDL 生成（D14）并进入 `glue.d.ts` 的返回类型与输出
+struct。
 
 ### 4.2 IDL 形状
 
@@ -807,7 +816,7 @@ clamp。未知 tool 名同样返回 invalid params。
 - `--read-only` / allow/deny tool 过滤；
 - 独立 SSE transport；
 - `.zod.ts` 生成（glue `.d.ts` 已实现）；
-- `$ref` / `$defs` / enum / `allOf` / `oneOf` / `outputSchema` 的精确映射；
+- enum / `allOf` / `oneOf` 的精确映射；
 - 跨 namespace `common` 类型和公共字段抽取；
 - 真正异步的 Promise tool call（当前只做 `await` 语法兼容）；
 - 结果截断（当前只有超限报错）；

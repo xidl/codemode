@@ -2,7 +2,8 @@ use serde_json::json;
 use xidl_codemode::catalog::{ServerCatalog, ToolInfo};
 use xidl_codemode::idl;
 use xidl_parser::hir::{
-    Annotation, Definition, Export, InterfaceDcl, InterfaceDclInner, OpDcl, Specification, TypeSpec,
+    Annotation, Definition, Export, InterfaceDcl, InterfaceDclInner, OpDcl, OpTypeSpec,
+    Specification, TypeSpec,
 };
 
 fn find_interface<'a>(spec: &'a Specification, name: &str) -> Option<&'a InterfaceDcl> {
@@ -152,6 +153,121 @@ fn identical_tool_names_do_not_get_rename() {
     assert!(idl.contains("any ping()"));
     assert!(!idl.contains("@rename"));
     assert!(!idl.contains("@mcp_tool"));
+}
+
+#[test]
+fn output_schema_generates_typed_return() {
+    let catalog = ServerCatalog {
+        name: "demo".into(),
+        js_name: "demo".into(),
+        instructions: None,
+        namespace_map: Default::default(),
+        tools: vec![ToolInfo {
+            name: "get_issue".into(),
+            description: String::new(),
+            input_schema: serde_json::json!({"type": "object"}),
+            output_schema: Some(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "number": { "type": "integer" },
+                    "labels": { "type": "array", "items": { "type": "string" } },
+                    "author": { "type": "object", "properties": { "login": { "type": "string" } } }
+                },
+                "required": ["number"]
+            })),
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: false,
+        }],
+    };
+    let generated = idl::generate(&catalog);
+    let idl = &generated.namespaces[0].idl;
+    assert!(idl.contains("struct DemoDefaultGetIssueOutput {"));
+    assert!(idl.contains("    int64 number;"));
+    assert!(idl.contains("    @optional sequence<string> labels;"));
+    assert!(idl.contains("DemoDefaultGetIssueOutputAuthor author;"));
+    assert!(idl.contains("    DemoDefaultGetIssueOutput get_issue();"));
+    let typed = xidl_parser::parser::parser_text(idl).expect("parse generated IDL");
+    let hir = Specification::from(typed);
+    let interface = find_interface(&hir, "DemoDefaultApi").expect("DemoDefaultApi");
+    let op = find_operation(interface, "get_issue");
+    assert!(matches!(
+        &op.ty,
+        OpTypeSpec::TypeSpec(TypeSpec::ScopedName(name))
+            if name.name.last().map(String::as_str) == Some("DemoDefaultGetIssueOutput")
+    ));
+}
+
+#[test]
+fn output_schema_refs_defs_and_recursion() {
+    let catalog = ServerCatalog {
+        name: "demo".into(),
+        js_name: "demo".into(),
+        instructions: None,
+        namespace_map: Default::default(),
+        tools: vec![ToolInfo {
+            name: "search".into(),
+            description: String::new(),
+            input_schema: serde_json::json!({"type": "object"}),
+            output_schema: Some(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "meta": { "$ref": "#/$defs/meta" },
+                    "root": { "$ref": "#/$defs/node" }
+                },
+                "required": ["meta", "root"],
+                "$defs": {
+                    "meta": {
+                        "type": "object",
+                        "properties": { "page": { "type": "integer" } }
+                    },
+                    "node": {
+                        "type": "object",
+                        "properties": {
+                            "children": {
+                                "type": "array",
+                                "items": { "$ref": "#/$defs/node" }
+                            }
+                        }
+                    }
+                }
+            })),
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: false,
+        }],
+    };
+    let generated = idl::generate(&catalog);
+    let idl = &generated.namespaces[0].idl;
+    assert!(idl.contains("DemoDefaultSearchOutputMeta meta;"));
+    assert!(idl.contains("DemoDefaultSearchOutputRoot root;"));
+    assert!(idl.contains("sequence<DemoDefaultSearchOutputRoot> children;"));
+    let typed = xidl_parser::parser::parser_text(idl).expect("parse generated IDL");
+    let _hir = Specification::from(typed);
+}
+
+#[test]
+fn missing_output_schema_stays_any() {
+    let catalog = ServerCatalog {
+        name: "demo".into(),
+        js_name: "demo".into(),
+        instructions: None,
+        namespace_map: Default::default(),
+        tools: vec![ToolInfo {
+            name: "ping".into(),
+            description: String::new(),
+            input_schema: serde_json::json!({"type": "object"}),
+            output_schema: None,
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: false,
+        }],
+    };
+    let generated = idl::generate(&catalog);
+    assert!(generated.namespaces[0].idl.contains("    any ping();"));
 }
 
 #[test]
