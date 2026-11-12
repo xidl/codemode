@@ -118,8 +118,7 @@ fn emit_js(server: &str, interfaces: &[Interface]) -> String {
 
 fn emit_tool(out: &mut String, server: &str, op: &OpDcl) {
     let js_name = js_string(&op.ident);
-    let wire_tool_name =
-        annotation_string(&op.annotations, "mcp_tool").unwrap_or_else(|| op.ident.clone());
+    let wire_tool_name = annotation_rename(&op.annotations).unwrap_or_else(|| op.ident.clone());
     let wire_tool_json = js_string(&wire_tool_name);
     let params = op
         .parameter
@@ -189,7 +188,7 @@ fn emit_dts(server: &str, interfaces: &[Interface]) -> String {
         out.push_str(&format!("export interface {} {{\n", interface.name));
         for op in &interface.operations {
             let wire_tool_name =
-                annotation_string(&op.annotations, "mcp_tool").unwrap_or_else(|| op.ident.clone());
+                annotation_rename(&op.annotations).unwrap_or_else(|| op.ident.clone());
             if wire_tool_name != op.ident {
                 out.push_str(&format!("  /** MCP tool: {wire_tool_name} */\n"));
             }

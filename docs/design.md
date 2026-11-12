@@ -395,7 +395,7 @@ QuickJS 只提供：
 - description 最多保留 12 行；
 - required 参数不带 `@optional`，其余带 `@optional`；
 - 非法 identifier sanitize，并用 `@rename("original")` 保留 wire 名；
-- operation 一定带 `@mcp_tool("原始 tool 名")`；
+- method 名与原始 tool 名不同时带 `@rename("原始 tool 名")`，相同时不带；
 - flags 只在为 true 时写 `@mcp_read_only`、`@mcp_destructive`、
   `@mcp_idempotent`、`@mcp_open_world`。
 
@@ -547,7 +547,6 @@ struct ToolInfo {
 @mcp_namespace("issues")
 interface GithubIssuesApi {
     /// Get a single issue.
-    @mcp_tool("get_issue")
     @mcp_read_only
     any get_issue(
         /// Repository owner.
@@ -577,7 +576,7 @@ bundle IDL 是同一份内容的合并版本，供 xidlc/插件一次性解析�
 插件需要携带的 annotation：
 
 - interface：`@mcp_server("...")`、`@mcp_namespace("...")`；
-- operation：`@mcp_tool("...")`；
+- operation：method 名与 wire tool 名不同时带 `@rename("wire tool 名")`；
 - 可选 flags：`@mcp_read_only`、`@mcp_destructive`、`@mcp_idempotent`、
   `@mcp_open_world`；
 - 参数：`@optional` 决定 required，`@rename` 决定 wire 名。

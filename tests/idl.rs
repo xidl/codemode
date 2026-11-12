@@ -82,7 +82,8 @@ fn generates_namespace_idl_and_agents_md() {
     let idl = &generated.namespaces[0].idl;
     assert!(idl.contains("@mcp_server(\"demo\")"));
     assert!(idl.contains("@mcp_namespace(\"issues\")"));
-    assert!(idl.contains("@mcp_tool(\"issues.get\")"));
+    assert!(idl.contains("@rename(\"issues.get\")"));
+    assert!(!idl.contains("@mcp_tool"));
     let typed = xidl_parser::parser::parser_text(idl).expect("parse generated IDL");
     let hir = Specification::from(typed);
     let interface = find_interface(&hir, "DemoIssuesApi").expect("DemoIssuesApi");
@@ -126,4 +127,29 @@ fn generates_namespace_idl_and_agents_md() {
     assert!(!generated.agents_md.contains("mcp.demo"));
     assert!(!generated.agents_md.contains("issues_get("));
     assert!(generated.bundle.contains("interface DemoIssuesApi"));
+}
+
+#[test]
+fn identical_tool_names_do_not_get_rename() {
+    let catalog = ServerCatalog {
+        name: "demo".into(),
+        js_name: "demo".into(),
+        instructions: None,
+        namespace_map: Default::default(),
+        tools: vec![ToolInfo {
+            name: "ping".into(),
+            description: String::new(),
+            input_schema: serde_json::json!({"type": "object"}),
+            output_schema: None,
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: false,
+        }],
+    };
+    let generated = idl::generate(&catalog);
+    let idl = &generated.namespaces[0].idl;
+    assert!(idl.contains("any ping()"));
+    assert!(!idl.contains("@rename"));
+    assert!(!idl.contains("@mcp_tool"));
 }

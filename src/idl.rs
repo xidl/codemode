@@ -149,7 +149,9 @@ impl IdlBuilder {
             format!("\n{}\n    ", params.join(",\n"))
         };
         let mut annotations = String::new();
-        annotations.push_str(&format!("    @mcp_tool(\"{}\")\n", escape(&tool.name)));
+        if method != tool.name {
+            annotations.push_str(&format!("    @rename(\"{}\")\n", escape(&tool.name)));
+        }
         if tool.read_only {
             annotations.push_str("    @mcp_read_only\n");
         }
