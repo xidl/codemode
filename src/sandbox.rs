@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use rquickjs::{Context, Function, Object, Runtime, Value as JsValue};
+use rquickjs::{Context, Function, Object, Promise, Runtime, Value as JsValue};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -332,17 +332,28 @@ fn run_js(context: RunContext) -> std::result::Result<JsOutcome, (String, Option
         let code_json = serde_json::to_string(&code)
             .map_err(|err| (format!("encode user code: {err}"), None))?;
         let wrapper = wrapper_script(&code_json, MAX_RESULT_BYTES);
-        match ctx.eval::<String, _>(wrapper.as_str()) {
+        let promise: Promise = ctx
+            .eval(wrapper.as_str())
+            .map_err(|err| (format!("evaluate execution wrapper: {err}"), None))?;
+        match promise.finish::<String>() {
             Ok(raw) => serde_json::from_str(&raw)
                 .map_err(|err| (format!("decode execution outcome: {err}: {raw}"), None)),
             Err(err) => {
-                let caught = rquickjs::CaughtError::from_error(&ctx, err);
-                let (message, stack) = match &caught {
-                    rquickjs::CaughtError::Exception(exception) => (
-                        exception.message().unwrap_or_else(|| exception.to_string()),
-                        exception.stack(),
-                    ),
-                    other => (other.to_string(), None),
+                let (message, stack) = if matches!(err, rquickjs::Error::WouldBlock) {
+                    (
+                        "await cannot make progress: no timers or async host calls are available"
+                            .to_string(),
+                        None,
+                    )
+                } else {
+                    let caught = rquickjs::CaughtError::from_error(&ctx, err);
+                    match &caught {
+                        rquickjs::CaughtError::Exception(exception) => (
+                            exception.message().unwrap_or_else(|| exception.to_string()),
+                            exception.stack(),
+                        ),
+                        other => (other.to_string(), None),
+                    }
                 };
                 Err((message, stack))
             }
@@ -352,13 +363,13 @@ fn run_js(context: RunContext) -> std::result::Result<JsOutcome, (String, Option
 
 fn wrapper_script(code_json: &str, max_result: usize) -> String {
     format!(
-        r#"(function(){{
+        r#"(async function(){{
   const __src = {code_json};
   let __fn;
-  try {{ __fn = new Function(__src); }} catch (__e) {{
+  try {{ __fn = Object.getPrototypeOf(async function(){{}}).constructor(__src); }} catch (__e) {{
     return JSON.stringify({{ ok:false, error:{{ code:"js_error", message:String(__e && __e.message !== undefined ? __e.message : __e), stack:__e && __e.stack ? String(__e.stack) : null }} }});
   }}
-  const __v = __fn();
+  const __v = await __fn();
   if (__v === undefined) return JSON.stringify({{ ok:true, value:null }});
   const __s = JSON.stringify(__v);
   if (__s === undefined) return JSON.stringify({{ ok:true, value:null }});

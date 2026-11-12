@@ -279,7 +279,7 @@ wire 名和是否 required。
 这样做的成本远低于一次 MCP tool call，但能避免跨执行的全局状态、定时器、
 原型污染和未释放 Promise。
 
-### D10：同步桥接
+### D10：同步桥接与 await 语法兼容
 
 QuickJS 里的 tool 函数是同步函数。glue 通过注入的 `host.callTool` 进入
 一个独立 bridge 线程，再由该线程上的 tokio `current_thread` runtime 调用
@@ -287,13 +287,12 @@ QuickJS 里的 tool 函数是同步函数。glue 通过注入的 `host.callTool`
 
 结果：
 
-- `await` 在用户代码中不可用。`execute.code` 被包进普通 `Function`，
-  `await` 会产生语法错误；
-- 返回 Promise 不会被等待，`JSON.stringify(Promise)` 得到 `{}`；
-- `Promise.all` 不会带来真实并发；
+- `execute.code` 在 async IIFE 中运行，`await` 语法可用；
+- QuickJS pending jobs 由 `Promise::finish()` 驱动，纯 JS Promise 会完成；
+- 没有 timer 或异步 host call 时，pending Promise 会立即返回明确的
+  `await cannot make progress` 错误；
+- `Promise.all` 在纯 JS 值上可用，但不会带来真实上游并发；
 - 所有上游 tool call 在单个 bridge 线程上串行执行。
-
-这是当前实现的明确限制，不是文档遗漏。异步 Promise 桥接属于后续工作。
 
 ### D11：原始 `CallToolResult` 与 `unwrap`
 
@@ -674,21 +673,24 @@ bundle IDL 是同一份内容的合并版本，供 xidlc/插件一次性解析�
 
 ### 7.2 执行包装
 
-用户代码被放进普通 `Function`：
+用户代码被放进 async IIFE：
 
 ```js
-const fn = new Function(source);
-const value = fn();
-return JSON.parse(JSON.stringify(value));
+(async function() {
+  const fn = Object.getPrototypeOf(async function() {}).constructor(source);
+  const value = await fn();
+  return JSON.parse(JSON.stringify(value));
+})()
 ```
 
 因此：
 
 - 顶层 `return` 可用；
-- `await` 不可用；
+- `await` 可用于语法兼容和纯 JS Promise；
 - `undefined` 变成 `null`；
 - 循环引用、BigInt 等序列化失败会变成 `js_error`；
-- 返回 Promise 不会被等待。
+- 没有 timer 或异步 host call 的 pending Promise 返回明确的
+  `await cannot make progress` 错误。
 
 ### 7.3 Timeout 与错误分类
 
@@ -798,7 +800,7 @@ clamp。未知 tool 名同样返回 invalid params。
 - `.zod.ts` 生成（glue `.d.ts` 已实现）；
 - `$ref` / `$defs` / enum / `allOf` / `oneOf` / `outputSchema` 的精确映射；
 - 跨 namespace `common` 类型和公共字段抽取；
-- 真正异步的 Promise tool call；
+- 真正异步的 Promise tool call（当前只做 `await` 语法兼容）；
 - 结果截断（当前只有超限报错）；
 - 多实例 workspace 锁和旧文件清理。
 

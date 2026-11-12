@@ -149,6 +149,10 @@ return unwrap(result);
 otherwise returns the content blocks. Tool arguments are positional and follow
 the upstream MCP input-schema property order.
 
+`await` works for syntax compatibility and pure JavaScript promises. Upstream
+tool calls remain synchronous and serial; `Promise.all` does not provide real
+upstream concurrency.
+
 ## CLI
 
 ```bash

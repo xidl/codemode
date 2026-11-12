@@ -7,6 +7,8 @@ MCP APIs are injected as `mcp.<server>.<tool>(arg1, arg2, ...)`.
 Use `unwrap(result)` to get `structuredContent` or `content`. Tool arguments
 are positional; trailing optional arguments may be omitted, and an optional
 argument before a required one is skipped with `null`. Do not use `undefined`.
+Tool calls remain synchronous and serial; `await` is only syntax-compatible
+with pure JavaScript promises.
 
 API docs: `{DOCS_DIR}/<server>/*.idl` (read with file tools; do not edit).
 Parameter order and types are defined in each IDL.
