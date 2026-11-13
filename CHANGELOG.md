@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/xidl/codemode/compare/v0.7.0...v0.7.1) (2026-11-13)
+
+
+### Bug Fixes
+
+* allow filesystem root in execute roots ([73eee02](https://github.com/xidl/codemode/commit/73eee0226478e5bf313f45367120c03fbb23476c))
+
 ## [0.7.0](https://github.com/xidl/codemode/compare/v0.6.0...v0.7.0) (2026-11-12)
 
 
