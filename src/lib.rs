@@ -3,6 +3,7 @@ pub mod catalog;
 pub mod config;
 pub mod error;
 pub mod glue;
+pub mod glue_codegen;
 pub mod idl;
 pub mod runlog;
 pub mod sandbox;

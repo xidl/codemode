@@ -2,76 +2,13 @@ use std::collections::{BTreeMap, HashSet};
 
 use serde_json::Value;
 
-use crate::catalog::{namespace_for, pascal_case, snake_case, ServerCatalog, ToolInfo};
+use crate::catalog::{pascal_case, snake_case, ToolInfo};
 
-pub struct GeneratedNamespace {
-    pub name: String,
-    pub idl: String,
-}
+use super::schema::{
+    collect_defs, doc_comment, doc_comment_indented, escape, method_name, ref_name,
+};
 
-pub struct GeneratedServer {
-    pub catalog: ServerCatalog,
-    pub namespaces: Vec<GeneratedNamespace>,
-    pub bundle: String,
-    pub agents_md: String,
-}
-
-pub fn generate(catalog: &ServerCatalog) -> GeneratedServer {
-    let all_names: Vec<String> = catalog.tools.iter().map(|tool| tool.name.clone()).collect();
-    let mut grouped: BTreeMap<String, Vec<&ToolInfo>> = BTreeMap::new();
-    for tool in &catalog.tools {
-        let namespace = namespace_for(
-            &catalog.name,
-            &tool.name,
-            &all_names,
-            &catalog.namespace_map,
-        );
-        grouped.entry(namespace).or_default().push(tool);
-    }
-
-    let mut namespaces = Vec::new();
-    let mut bundle_parts = Vec::new();
-    let agents = catalog
-        .instructions
-        .as_deref()
-        .map(str::trim)
-        .filter(|text| !text.is_empty())
-        .map(|text| format!("{text}\n"))
-        .unwrap_or_default();
-
-    for (namespace, tools) in grouped {
-        let mut builder = IdlBuilder::new(&catalog.name, &namespace);
-        for tool in &tools {
-            builder.add_tool(tool);
-        }
-        let body = builder.finish();
-        let idl = format!(
-            "#pragma xidlc package {}\n#pragma xidlc version 1.0.0\n\n{}",
-            catalog.name, body
-        );
-        bundle_parts.push(body);
-        namespaces.push(GeneratedNamespace {
-            name: namespace.clone(),
-            idl,
-        });
-    }
-
-    let bundle = format!(
-        "#pragma xidlc package {}\n#pragma xidlc version 1.0.0\n\n\
-         {}",
-        catalog.name,
-        bundle_parts.join("\n")
-    );
-
-    GeneratedServer {
-        catalog: catalog.clone(),
-        namespaces,
-        bundle,
-        agents_md: agents,
-    }
-}
-
-struct IdlBuilder {
+pub(crate) struct IdlBuilder {
     server: String,
     server_pascal: String,
     namespace: String,
@@ -86,7 +23,7 @@ struct IdlBuilder {
 }
 
 impl IdlBuilder {
-    fn new(server: &str, namespace: &str) -> Self {
+    pub(crate) fn new(server: &str, namespace: &str) -> Self {
         Self {
             server: server.to_string(),
             server_pascal: pascal_case(server),
@@ -102,7 +39,7 @@ impl IdlBuilder {
         }
     }
 
-    fn add_tool(&mut self, tool: &ToolInfo) {
+    pub(crate) fn add_tool(&mut self, tool: &ToolInfo) {
         self.defs.clear();
         self.resolving.clear();
         self.resolved_names.clear();
@@ -189,7 +126,7 @@ impl IdlBuilder {
         ));
     }
 
-    fn finish(&self) -> String {
+    pub(crate) fn finish(&self) -> String {
         let mut out = String::new();
         for item in &self.structs {
             out.push_str(item);
@@ -355,60 +292,4 @@ impl IdlBuilder {
         }
         resolved
     }
-}
-
-/// Resolve a JSON pointer into a `$defs`/`definitions` entry name. Only
-/// root-level definition maps are supported; anything else falls back to
-/// `any` at the call site.
-fn ref_name(reference: &str) -> Option<&str> {
-    let path = reference.strip_prefix("#/")?;
-    let components: Vec<&str> = path.split('/').collect();
-    let name = components.last()?;
-    match components.len() {
-        2 if components[0] == "$defs" || components[0] == "definitions" => Some(name),
-        3 if components[0] == "components" && components[1] == "schemas" => Some(name),
-        _ => None,
-    }
-}
-
-fn collect_defs(schema: &Value, defs: &mut BTreeMap<String, Value>) {
-    for key in ["$defs", "definitions"] {
-        if let Some(entries) = schema.get(key).and_then(Value::as_object) {
-            for (name, value) in entries {
-                defs.entry(name.clone()).or_insert_with(|| value.clone());
-            }
-        }
-    }
-}
-
-fn method_name(tool: &str) -> String {
-    snake_case(tool)
-}
-
-fn doc_comment(text: &str) -> String {
-    doc_comment_indented(text, 4)
-}
-
-fn doc_comment_indented(text: &str, indent: usize) -> String {
-    if text.trim().is_empty() {
-        return String::new();
-    }
-    let padding = " ".repeat(indent);
-    let mut out = String::new();
-    for line in text.lines().take(12) {
-        let line = line.trim();
-        if line.is_empty() {
-            out.push_str(&format!("{padding}///\n"));
-        } else {
-            out.push_str(&format!(
-                "{padding}/// {}\n",
-                line.replace(['\r', '\u{0}'], "")
-            ));
-        }
-    }
-    out
-}
-
-fn escape(text: &str) -> String {
-    text.replace('\\', "\\\\").replace('"', "\\\"")
 }
